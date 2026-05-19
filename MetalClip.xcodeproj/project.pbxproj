@@ -6,13 +6,33 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		B297A5012FB1920B002155C0 /* HotKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = B297A5002FB1920B002155C0 /* HotKey.swift */; };
+		B297A50D2FB1E9DD002155C0 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = B297A50C2FB1E9DD002155C0 /* main.swift */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		B297A4ED2FB18D3A002155C0 /* MetalClip.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MetalClip.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B297A5002FB1920B002155C0 /* HotKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotKey.swift; sourceTree = "<group>"; };
+		B297A50C2FB1E9DD002155C0 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		B297A4FF2FB18EC2002155C0 /* Exceptions for "MetalClip" folder in "MetalClip" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = B297A4EC2FB18D3A002155C0 /* MetalClip */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		B297A4EF2FB18D3A002155C0 /* MetalClip */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				B297A4FF2FB18EC2002155C0 /* Exceptions for "MetalClip" folder in "MetalClip" target */,
+			);
 			path = MetalClip;
 			sourceTree = "<group>";
 		};
@@ -32,8 +52,10 @@
 		B297A4E42FB18D3A002155C0 = {
 			isa = PBXGroup;
 			children = (
+				B297A5002FB1920B002155C0 /* HotKey.swift */,
 				B297A4EF2FB18D3A002155C0 /* MetalClip */,
 				B297A4EE2FB18D3A002155C0 /* Products */,
+				B297A50C2FB1E9DD002155C0 /* main.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -119,6 +141,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B297A50D2FB1E9DD002155C0 /* main.swift in Sources */,
+				B297A5012FB1920B002155C0 /* HotKey.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -251,11 +275,11 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_APP_SANDBOX = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
+				ENABLE_APP_SANDBOX = NO;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MetalClip/Info.plist;
+				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMainStoryboardFile = Main;
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -282,11 +306,11 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_APP_SANDBOX = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
+				ENABLE_APP_SANDBOX = NO;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MetalClip/Info.plist;
+				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMainStoryboardFile = Main;
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
