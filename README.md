@@ -32,6 +32,7 @@ Built natively for macOS with ScreenCaptureKit and hardware-accelerated HEVC enc
 - **Settings persistence**: All preferences saved across app restarts
 - **Recording indicator**: Red dot overlay excluded from capture
 - **Menu bar app**: Lives in the system tray, no Dock icon
+- **Microphone input** *(planned)*: UI present, capture integration coming in v0.5
 
 ## Requirements
 
@@ -79,7 +80,7 @@ All settings are accessible from the menu bar dropdown:
 - **Frame Rate**: 15, 30, 60 (default), 120 fps
 - **Quality**: High (default), Medium, Low
 - **Force Apply**: When OFF, captures at max quality (120fps, native resolution). When ON, applies your FPS/quality settings during capture to save resources.
-- **Microphone**: Off (default) or MacBook Pro Microphone
+- **Microphone**: Off (default) — *microphone capture is planned but not yet functional; the UI is present but selecting a mic has no effect on recordings*
 
 Clips are saved to `~/Movies/MetalClip/`.
 

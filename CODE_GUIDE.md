@@ -186,15 +186,17 @@ Routes each sample buffer to:
 1. `rollingBuffer.appendVideoSample()` or `appendAudioSample()` (always)
 2. `appendToContinuous()` (only if `isContinuousRecording`)
 
-For video: stamps P3 color attachments on the pixel buffer via `CVBufferSetAttachment` before forwarding. This is done here (at delivery time) rather than in RollingBuffer because continuous recording also needs the color tags.
+The stream handler itself does not modify the sample buffers — it only routes them. P3 color attachments (`CVBufferSetAttachment`) are stamped on the pixel buffer at two separate points downstream:
+- `RollingBuffer.appendVideoSample()` — stamps before writing to segment files
+- `ScreenRecorder.appendToContinuous()` — stamps before writing to the continuous recording file
 
-Wait — actually the color stamping is done in both RollingBuffer.appendVideoSample() and appendToContinuous(). The stream handler just routes.
+This ensures both code paths produce correctly color-tagged output independently.
 
 #### Continuous Recording
 
-`startContinuousRecording(to:)` / `stopContinuousRecording(completion:)` manage a separate `AVAssetWriter` that runs in parallel with the rolling buffer. Same HEVC + AAC settings. The `continuousQueue` serializes all writes.
+`startContinuousRecording(to:)` / `stopContinuousRecording(completion:)` manage a separate `AVAssetWriter` that runs in parallel with the rolling buffer. Same HEVC + AAC settings, but no explicit bitrate cap (uses encoder default). The `continuousQueue` serializes all writes.
 
-`appendToContinuous()` stamps P3 color attachments on video pixel buffers, then appends to the continuous writer's video or audio input.
+`appendToContinuous()` stamps P3 color attachments on video pixel buffers via `CVBufferSetAttachment`, then appends to the continuous writer's video or audio input.
 
 ---
 
