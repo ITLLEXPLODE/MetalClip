@@ -36,7 +36,7 @@
 
 **Cause**: HEVC hardware encoding at full retina resolution (e.g., 3024x1964 on 14" MacBook Pro) at 120fps pushes the media engine hard. The 40Mbps bitrate cap helps but encoding is still intensive.
 
-**Mitigation**: Use "Force Apply" with lower FPS (60) or quality (Medium/Low) during gaming to reduce encoding load. When Force Apply is OFF, the app captures at 120fps regardless.
+**Mitigation**: Enable "Force Apply" and set lower FPS (60) or quality (Medium/Low) during gaming. Force Apply controls whether capture settings apply at capture time or export time. When OFF (default), the app always captures at maximum quality (120fps, native resolution) and applies your FPS/quality settings only when exporting — best quality, higher CPU. When ON, your FPS/quality settings apply during capture itself — lower CPU usage, smaller buffer. This option will be replaced by simpler Quality Presets in a future version.
 
 **Future**: Investigate adaptive frame rate (match capture FPS to display refresh rate) and hardware encoder occupancy monitoring.
 

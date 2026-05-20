@@ -79,7 +79,7 @@ All settings are accessible from the menu bar dropdown:
 - **Clip Length**: 30s, 1m, 2m (default), 5m, 10m, 30m
 - **Frame Rate**: 15, 30, 60 (default), 120 fps
 - **Quality**: High (default), Medium, Low
-- **Force Apply**: When OFF, captures at max quality (120fps, native resolution). When ON, applies your FPS/quality settings during capture to save resources.
+- **Force Apply**: Controls whether capture settings apply at capture time or export time. When OFF (default), the app always captures at maximum quality (120fps, native resolution) and applies your FPS/quality settings only when exporting — best quality, higher CPU. When ON, your FPS/quality settings apply during capture itself — lower CPU usage, smaller buffer. *Note: this option will be replaced by simpler Quality Presets in a future version.*
 - **Microphone**: Off (default) — *microphone capture is planned but not yet functional; the UI is present but selecting a mic has no effect on recordings*
 
 Clips are saved to `~/Movies/MetalClip/`.
@@ -98,4 +98,4 @@ MIT — see [LICENSE](LICENSE) for details.
 
 ## Author
 
-**Inho Yoon** — [@ITLLEXPLODE](https://github.com/ITLLEXPLODE)
+[@ITLLEXPLODE](https://github.com/ITLLEXPLODE)
