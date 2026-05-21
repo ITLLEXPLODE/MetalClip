@@ -78,6 +78,38 @@ enum CaptureQualityPreset: String, CaseIterable {
     }
 }
 
+// MARK: - Custom Preset
+
+struct CustomPreset: Codable, Equatable {
+    var name: String
+    var height: Int
+    var maxFPS: Int
+    var bitrate: Int
+
+    var displayName: String {
+        let res = height >= 2160 ? "4K" : "\(height)p"
+        let fps = maxFPS == 0 ? "Match" : "\(maxFPS)"
+        return "\(name) \(res)\(fps)"
+    }
+
+    var effectiveBitrate: Int {
+        if bitrate > 0 { return bitrate }
+        let base: Int
+        switch height {
+        case ...720: base = 10_000_000
+        case ...1080: base = 20_000_000
+        case ...1440: base = 30_000_000
+        default: base = 45_000_000
+        }
+        let fps = maxFPS == 0 ? (NSScreen.main?.maximumFramesPerSecond ?? 60) : maxFPS
+        return fps > 60 ? Int(Double(base) * 1.5) : base
+    }
+
+    var targetHeight: Int? {
+        height >= 2160 ? nil : height
+    }
+}
+
 // MARK: - AppDelegate
 
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -97,6 +129,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var currentMicrophone: String = "Off"
     var isRecording: Bool = false
     var currentPreset: CaptureQualityPreset = .balanced
+    var customPresets: [CustomPreset] = []
+    var selectedCustomPresetName: String? = nil
+    var customPresetWindowController: CustomPresetWindowController!
+    var isLowPowerActive = false
+    var lowPowerPopupWindow: NSWindow?
 
     let saveClipHotKey = HotKey(
         keyCode: 18,
@@ -121,8 +158,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupMenuBar()
         setupHotKeys()
         setupCustomClipWindow()
+        setupCustomPresetWindow()
         clipPlayer = ClipPlayerWindowController()
         startScreenCapture()
+
+        isLowPowerActive = ProcessInfo.processInfo.isLowPowerModeEnabled
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(powerStateChanged),
+            name: Notification.Name("NSProcessInfoPowerStateDidChangeNotification"),
+            object: nil
+        )
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -143,6 +189,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         currentClipLength = defaults.integer(forKey: "clipLength")
         currentPreset = CaptureQualityPreset(rawValue: defaults.string(forKey: "captureQuality") ?? "") ?? .balanced
         currentMicrophone = defaults.string(forKey: "microphone") ?? "Off"
+        selectedCustomPresetName = defaults.string(forKey: "selectedCustomPreset")
+        if let data = defaults.data(forKey: "customPresets"),
+           let decoded = try? JSONDecoder().decode([CustomPreset].self, from: data) {
+            customPresets = decoded
+        }
     }
 
     func saveSettings() {
@@ -150,6 +201,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         defaults.set(currentClipLength, forKey: "clipLength")
         defaults.set(currentPreset.rawValue, forKey: "captureQuality")
         defaults.set(currentMicrophone, forKey: "microphone")
+        defaults.set(selectedCustomPresetName, forKey: "selectedCustomPreset")
+        if let data = try? JSONEncoder().encode(customPresets) {
+            defaults.set(data, forKey: "customPresets")
+        }
     }
 
     // MARK: - Capture
@@ -159,12 +214,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return min(elapsed, 1800)
     }
 
+    func activePresetParams() -> (maxFPS: Int, targetHeight: Int?, bitrate: Int) {
+        if let name = selectedCustomPresetName,
+           let custom = customPresets.first(where: { $0.name == name }) {
+            let fps = custom.maxFPS == 0 ? Int.max : custom.maxFPS
+            return (fps, custom.targetHeight, custom.effectiveBitrate)
+        }
+        return (currentPreset.maxFPS, currentPreset.targetHeight, currentPreset.bitrate)
+    }
+
     func startScreenCapture() {
+        let params = activePresetParams()
         screenRecorder = ScreenRecorder()
         screenRecorder.maxBufferDuration = 1800
-        screenRecorder.captureMaxFPS = currentPreset.maxFPS
-        screenRecorder.captureTargetHeight = currentPreset.targetHeight
-        screenRecorder.captureBitrate = currentPreset.bitrate
+        screenRecorder.captureMaxFPS = params.maxFPS
+        screenRecorder.captureTargetHeight = params.targetHeight
+        screenRecorder.captureBitrate = params.bitrate
 
         Task {
             do {
@@ -199,8 +264,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func rebuildMenu() {
         let menu = NSMenu()
 
+        var statusText = isRecording ? "● Recording in Progress..." : "MetalClip — Ready"
+        if isLowPowerActive {
+            let displayHz = NSScreen.main?.maximumFramesPerSecond ?? 60
+            statusText += " · Low Power (\(displayHz)fps)"
+        }
         let statusMenuItem = NSMenuItem(
-            title: isRecording ? "● Recording in Progress..." : "MetalClip — Ready",
+            title: statusText,
             action: nil,
             keyEquivalent: ""
         )
@@ -264,9 +334,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             )
             item.target = self
             item.representedObject = preset.rawValue
-            if preset == currentPreset { item.state = .on }
+            if selectedCustomPresetName == nil && preset == currentPreset { item.state = .on }
             presetMenu.addItem(item)
         }
+
+        if !customPresets.isEmpty {
+            presetMenu.addItem(NSMenuItem.separator())
+            for (index, custom) in customPresets.enumerated() {
+                let item = NSMenuItem(
+                    title: custom.displayName,
+                    action: #selector(setCustomPresetAction(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = self
+                item.tag = index
+                if selectedCustomPresetName == custom.name { item.state = .on }
+                presetMenu.addItem(item)
+            }
+        }
+
+        presetMenu.addItem(NSMenuItem.separator())
+        let addCustomItem = NSMenuItem(
+            title: "Add Custom...",
+            action: #selector(addCustomPresetAction),
+            keyEquivalent: ""
+        )
+        addCustomItem.target = self
+        presetMenu.addItem(addCustomItem)
+
+        if !customPresets.isEmpty {
+            let deleteItem = NSMenuItem(
+                title: "Delete Custom Preset...",
+                action: #selector(deleteCustomPresetAction),
+                keyEquivalent: ""
+            )
+            deleteItem.target = self
+            presetMenu.addItem(deleteItem)
+        }
+
         let presetItem = NSMenuItem(title: "Quality", action: nil, keyEquivalent: "")
         presetItem.submenu = presetMenu
         menu.addItem(presetItem)
@@ -455,46 +560,53 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         rebuildMenu()
     }
 
-    @objc func setQualityPresetAction(_ sender: NSMenuItem) {
-        guard let rawValue = sender.representedObject as? String,
-              let newPreset = CaptureQualityPreset(rawValue: rawValue),
-              newPreset != currentPreset else { return }
-
+    func offerBufferSave(presetName: String) -> Bool {
         let available = availableBufferSeconds()
-        if available > 0 {
-            let alert = NSAlert()
-            alert.messageText = "Change Quality?"
-            alert.informativeText = "Switching to \(newPreset.displayName) will clear the current buffer (\(formatDuration(available)) recorded). Save it first?"
-            alert.addButton(withTitle: "Save Clip")
-            alert.addButton(withTitle: "Discard")
-            alert.addButton(withTitle: "Cancel")
-            let response = alert.runModal()
+        guard available > 0 else { return true }
 
-            if response == .alertThirdButtonReturn { return }
+        let alert = NSAlert()
+        alert.messageText = "Change Quality?"
+        alert.informativeText = "Switching to \(presetName) will clear the current buffer (\(formatDuration(available)) recorded). Save it first?"
+        alert.addButton(withTitle: "Save Clip")
+        alert.addButton(withTitle: "Discard")
+        alert.addButton(withTitle: "Cancel")
+        let response = alert.runModal()
 
-            if response == .alertFirstButtonReturn {
-                guard let rollingBuffer = screenRecorder.rollingBuffer else { return }
-                let snapshotURLs = rollingBuffer.takeSnapshot()
-                let outputURL = clipsDirectory().appendingPathComponent("\(clipFilename()).mp4")
-                Task {
-                    do {
-                        try await ClipExporter.export(
-                            segmentURLs: snapshotURLs,
-                            lastSeconds: TimeInterval(available),
-                            to: outputURL,
-                            quality: "High"
-                        )
-                        DispatchQueue.main.async { [weak self] in
-                            self?.clipPlayer.show(url: outputURL)
-                        }
-                    } catch {
-                        print("❌ Buffer save failed: \(error)")
+        if response == .alertThirdButtonReturn { return false }
+
+        if response == .alertFirstButtonReturn {
+            guard let rollingBuffer = screenRecorder.rollingBuffer else { return true }
+            let snapshotURLs = rollingBuffer.takeSnapshot()
+            let outputURL = clipsDirectory().appendingPathComponent("\(clipFilename()).mp4")
+            Task { [weak self] in
+                do {
+                    try await ClipExporter.export(
+                        segmentURLs: snapshotURLs,
+                        lastSeconds: TimeInterval(available),
+                        to: outputURL,
+                        quality: "High"
+                    )
+                    DispatchQueue.main.async {
+                        self?.clipPlayer.show(url: outputURL)
                     }
+                } catch {
+                    print("❌ Buffer save failed: \(error)")
                 }
             }
         }
 
+        return true
+    }
+
+    @objc func setQualityPresetAction(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let newPreset = CaptureQualityPreset(rawValue: rawValue),
+              newPreset != currentPreset || selectedCustomPresetName != nil else { return }
+
+        guard offerBufferSave(presetName: newPreset.displayName) else { return }
+
         currentPreset = newPreset
+        selectedCustomPresetName = nil
         saveSettings()
         rebuildMenu()
         restartCapture()
@@ -502,12 +614,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func restartCapture() {
         Task {
+            let params = activePresetParams()
             await screenRecorder.stopCapture()
             screenRecorder = ScreenRecorder()
             screenRecorder.maxBufferDuration = 1800
-            screenRecorder.captureMaxFPS = currentPreset.maxFPS
-            screenRecorder.captureTargetHeight = currentPreset.targetHeight
-            screenRecorder.captureBitrate = currentPreset.bitrate
+            screenRecorder.captureMaxFPS = params.maxFPS
+            screenRecorder.captureTargetHeight = params.targetHeight
+            screenRecorder.captureBitrate = params.bitrate
             bufferStartDate = Date()
             do {
                 try await screenRecorder.startCapture()
@@ -527,6 +640,141 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func openClipsFolderAction() {
         NSWorkspace.shared.open(clipsDirectory())
+    }
+
+    // MARK: - Custom Presets
+
+    func setupCustomPresetWindow() {
+        customPresetWindowController = CustomPresetWindowController()
+        customPresetWindowController.onAdd = { [weak self] preset in
+            guard let self else { return }
+            if self.customPresets.contains(where: { $0.name == preset.name }) {
+                let alert = NSAlert()
+                alert.messageText = "Duplicate Name"
+                alert.informativeText = "A preset named '\(preset.name)' already exists."
+                alert.runModal()
+                return
+            }
+            self.customPresets.append(preset)
+            self.saveSettings()
+            self.rebuildMenu()
+        }
+    }
+
+    @objc func addCustomPresetAction() {
+        customPresetWindowController.showWindow()
+    }
+
+    @objc func setCustomPresetAction(_ sender: NSMenuItem) {
+        let index = sender.tag
+        guard index >= 0, index < customPresets.count else { return }
+        let custom = customPresets[index]
+
+        guard selectedCustomPresetName != custom.name else { return }
+        guard offerBufferSave(presetName: custom.displayName) else { return }
+
+        selectedCustomPresetName = custom.name
+        saveSettings()
+        rebuildMenu()
+        restartCapture()
+    }
+
+    @objc func deleteCustomPresetAction() {
+        guard !customPresets.isEmpty else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Delete Custom Preset"
+        alert.informativeText = "Choose a preset to delete:"
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 200, height: 28))
+        for custom in customPresets {
+            popup.addItem(withTitle: custom.displayName)
+        }
+        alert.accessoryView = popup
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let index = popup.indexOfSelectedItem
+        guard index >= 0, index < customPresets.count else { return }
+
+        let deleted = customPresets.remove(at: index)
+        let wasActive = selectedCustomPresetName == deleted.name
+        if wasActive {
+            selectedCustomPresetName = nil
+            currentPreset = .balanced
+        }
+        saveSettings()
+        rebuildMenu()
+        if wasActive {
+            restartCapture()
+        }
+    }
+
+    // MARK: - Low Power Mode
+
+    @objc func powerStateChanged() {
+        let wasLowPower = isLowPowerActive
+        isLowPowerActive = ProcessInfo.processInfo.isLowPowerModeEnabled
+
+        DispatchQueue.main.async { [weak self] in
+            self?.rebuildMenu()
+            if !wasLowPower && self?.isLowPowerActive == true {
+                self?.showLowPowerPopup()
+            }
+        }
+    }
+
+    func showLowPowerPopup() {
+        let displayHz = NSScreen.main?.maximumFramesPerSecond ?? 60
+
+        let width: CGFloat = 340
+        let height: CGFloat = 50
+        let screen = NSScreen.main
+        let origin = NSPoint(
+            x: (screen?.frame.midX ?? 500) - width / 2,
+            y: (screen?.frame.maxY ?? 500) - height - 60
+        )
+
+        let popup = NSWindow(
+            contentRect: NSRect(origin: origin, size: NSSize(width: width, height: height)),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        popup.isOpaque = false
+        popup.backgroundColor = NSColor.black.withAlphaComponent(0.85)
+        popup.level = .floating
+        popup.sharingType = .none
+        popup.collectionBehavior = [.canJoinAllSpaces, .stationary]
+        popup.ignoresMouseEvents = true
+        popup.hasShadow = true
+
+        let content = NSView()
+        content.wantsLayer = true
+        content.layer?.cornerRadius = 10
+        popup.contentView = content
+
+        let label = NSTextField(labelWithString: "Low Power Mode — capture limited to \(displayHz)fps")
+        label.textColor = .white
+        label.font = .systemFont(ofSize: 13, weight: .medium)
+        label.alignment = .center
+        label.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(label)
+
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+        ])
+
+        popup.orderFront(nil)
+        lowPowerPopupWindow = popup
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            self?.lowPowerPopupWindow?.orderOut(nil)
+            self?.lowPowerPopupWindow = nil
+        }
     }
 
     // MARK: - Utilities
