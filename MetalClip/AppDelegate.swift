@@ -33,6 +33,51 @@ class RecordingIndicatorWindow: NSWindow {
     }
 }
 
+// MARK: - Capture Quality Preset
+
+enum CaptureQualityPreset: String, CaseIterable {
+    case performance
+    case balanced
+    case quality
+    case maximum
+
+    var displayName: String {
+        switch self {
+        case .performance: return "Performance 1080p60"
+        case .balanced: return "Balanced 1440p60"
+        case .quality: return "Quality 4K60"
+        case .maximum: return "Maximum 4K120"
+        }
+    }
+
+    var targetHeight: Int? {
+        switch self {
+        case .performance: return 1080
+        case .balanced: return 1440
+        case .quality: return nil
+        case .maximum: return nil
+        }
+    }
+
+    var maxFPS: Int {
+        switch self {
+        case .performance: return 60
+        case .balanced: return 60
+        case .quality: return 60
+        case .maximum: return 120
+        }
+    }
+
+    var bitrate: Int {
+        switch self {
+        case .performance: return 20_000_000
+        case .balanced: return 30_000_000
+        case .quality: return 45_000_000
+        case .maximum: return 60_000_000
+        }
+    }
+}
+
 // MARK: - AppDelegate
 
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -51,12 +96,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var currentClipLength: Int = 120
     var currentMicrophone: String = "Off"
     var isRecording: Bool = false
-    var currentFPS: Int = 60
-    var currentQuality: String = "High"
-    var forceApply: Bool = false
-
-    let fpsOptions = [15, 30, 60, 120]
-    let qualityOptions = ["High", "Medium", "Low"]
+    var currentPreset: CaptureQualityPreset = .balanced
 
     let saveClipHotKey = HotKey(
         keyCode: 18,
@@ -97,24 +137,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let defaults = UserDefaults.standard
         defaults.register(defaults: [
             "clipLength": 120,
-            "fps": 60,
-            "quality": "High",
-            "forceApply": false,
+            "captureQuality": CaptureQualityPreset.balanced.rawValue,
             "microphone": "Off"
         ])
         currentClipLength = defaults.integer(forKey: "clipLength")
-        currentFPS = defaults.integer(forKey: "fps")
-        currentQuality = defaults.string(forKey: "quality") ?? "High"
-        forceApply = defaults.bool(forKey: "forceApply")
+        currentPreset = CaptureQualityPreset(rawValue: defaults.string(forKey: "captureQuality") ?? "") ?? .balanced
         currentMicrophone = defaults.string(forKey: "microphone") ?? "Off"
     }
 
     func saveSettings() {
         let defaults = UserDefaults.standard
         defaults.set(currentClipLength, forKey: "clipLength")
-        defaults.set(currentFPS, forKey: "fps")
-        defaults.set(currentQuality, forKey: "quality")
-        defaults.set(forceApply, forKey: "forceApply")
+        defaults.set(currentPreset.rawValue, forKey: "captureQuality")
         defaults.set(currentMicrophone, forKey: "microphone")
     }
 
@@ -128,14 +162,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func startScreenCapture() {
         screenRecorder = ScreenRecorder()
         screenRecorder.maxBufferDuration = 1800
-
-        if forceApply {
-            screenRecorder.requestedFPS = currentFPS
-            screenRecorder.qualityScale = qualityScaleValue()
-        } else {
-            screenRecorder.requestedFPS = 120
-            screenRecorder.qualityScale = 1.0
-        }
+        screenRecorder.captureMaxFPS = currentPreset.maxFPS
+        screenRecorder.captureTargetHeight = currentPreset.targetHeight
+        screenRecorder.captureBitrate = currentPreset.bitrate
 
         Task {
             do {
@@ -225,49 +254,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         clipLengthItem.submenu = clipLengthMenu
         menu.addItem(clipLengthItem)
 
-        // FPS submenu
-        let fpsMenu = NSMenu()
-        for fps in fpsOptions {
+        // Quality Preset submenu
+        let presetMenu = NSMenu()
+        for preset in CaptureQualityPreset.allCases {
             let item = NSMenuItem(
-                title: "\(fps) fps",
-                action: #selector(setFPSAction(_:)),
+                title: preset.displayName,
+                action: #selector(setQualityPresetAction(_:)),
                 keyEquivalent: ""
             )
             item.target = self
-            item.tag = fps
-            if fps == currentFPS { item.state = .on }
-            fpsMenu.addItem(item)
+            item.representedObject = preset.rawValue
+            if preset == currentPreset { item.state = .on }
+            presetMenu.addItem(item)
         }
-        let fpsItem = NSMenuItem(title: "Frame Rate", action: nil, keyEquivalent: "")
-        fpsItem.submenu = fpsMenu
-        menu.addItem(fpsItem)
-
-        // Quality submenu
-        let qualityMenu = NSMenu()
-        for quality in qualityOptions {
-            let item = NSMenuItem(
-                title: quality,
-                action: #selector(setQualityAction(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = quality
-            if quality == currentQuality { item.state = .on }
-            qualityMenu.addItem(item)
-        }
-        let qualityItem = NSMenuItem(title: "Quality", action: nil, keyEquivalent: "")
-        qualityItem.submenu = qualityMenu
-        menu.addItem(qualityItem)
-
-        // Force Apply toggle
-        let forceApplyItem = NSMenuItem(
-            title: "Force Apply Settings",
-            action: #selector(toggleForceApplyAction),
-            keyEquivalent: ""
-        )
-        forceApplyItem.target = self
-        forceApplyItem.state = forceApply ? .on : .off
-        menu.addItem(forceApplyItem)
+        let presetItem = NSMenuItem(title: "Quality", action: nil, keyEquivalent: "")
+        presetItem.submenu = presetMenu
+        menu.addItem(presetItem)
 
         // Microphone submenu
         let micMenu = NSMenu()
@@ -329,7 +331,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         customClipWindowController.availableSecondsProvider = { [weak self] in
             self?.availableBufferSeconds() ?? 0
         }
-        customClipWindowController.defaultQuality = currentQuality
+        customClipWindowController.defaultQuality = "High"
         customClipWindowController.onSave = { [weak self] totalSeconds, clipName, saveFolder, quality in
             guard let self else { return }
             let snapshotURLs = self.customClipWindowController.snapshotURLs
@@ -387,7 +389,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     segmentURLs: snapshotURLs,
                     lastSeconds: TimeInterval(actual),
                     to: outputURL,
-                    quality: currentQuality
+                    quality: "High"
                 )
                 DispatchQueue.main.async { [weak self] in
                     self?.clipPlayer.show(url: outputURL)
@@ -403,7 +405,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let timestamp = Date()
         let snapshotURLs = rollingBuffer.takeSnapshot()
 
-        customClipWindowController.defaultQuality = currentQuality
+        customClipWindowController.defaultQuality = "High"
         customClipWindowController.showWindow(snapshotURLs: snapshotURLs, captureTimestamp: timestamp)
     }
 
@@ -453,24 +455,46 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         rebuildMenu()
     }
 
-    @objc func setFPSAction(_ sender: NSMenuItem) {
-        currentFPS = sender.tag
-        saveSettings()
-        rebuildMenu()
-        if forceApply { restartCapture() }
-    }
+    @objc func setQualityPresetAction(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let newPreset = CaptureQualityPreset(rawValue: rawValue),
+              newPreset != currentPreset else { return }
 
-    @objc func setQualityAction(_ sender: NSMenuItem) {
-        if let quality = sender.representedObject as? String {
-            currentQuality = quality
-            saveSettings()
-            rebuildMenu()
-            if forceApply { restartCapture() }
+        let available = availableBufferSeconds()
+        if available > 0 {
+            let alert = NSAlert()
+            alert.messageText = "Change Quality?"
+            alert.informativeText = "Switching to \(newPreset.displayName) will clear the current buffer (\(formatDuration(available)) recorded). Save it first?"
+            alert.addButton(withTitle: "Save Clip")
+            alert.addButton(withTitle: "Discard")
+            alert.addButton(withTitle: "Cancel")
+            let response = alert.runModal()
+
+            if response == .alertThirdButtonReturn { return }
+
+            if response == .alertFirstButtonReturn {
+                guard let rollingBuffer = screenRecorder.rollingBuffer else { return }
+                let snapshotURLs = rollingBuffer.takeSnapshot()
+                let outputURL = clipsDirectory().appendingPathComponent("\(clipFilename()).mp4")
+                Task {
+                    do {
+                        try await ClipExporter.export(
+                            segmentURLs: snapshotURLs,
+                            lastSeconds: TimeInterval(available),
+                            to: outputURL,
+                            quality: "High"
+                        )
+                        DispatchQueue.main.async { [weak self] in
+                            self?.clipPlayer.show(url: outputURL)
+                        }
+                    } catch {
+                        print("❌ Buffer save failed: \(error)")
+                    }
+                }
+            }
         }
-    }
 
-    @objc func toggleForceApplyAction() {
-        forceApply = !forceApply
+        currentPreset = newPreset
         saveSettings()
         rebuildMenu()
         restartCapture()
@@ -481,27 +505,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             await screenRecorder.stopCapture()
             screenRecorder = ScreenRecorder()
             screenRecorder.maxBufferDuration = 1800
-            if forceApply {
-                screenRecorder.requestedFPS = currentFPS
-                screenRecorder.qualityScale = qualityScaleValue()
-            } else {
-                screenRecorder.requestedFPS = 120
-                screenRecorder.qualityScale = 1.0
-            }
+            screenRecorder.captureMaxFPS = currentPreset.maxFPS
+            screenRecorder.captureTargetHeight = currentPreset.targetHeight
+            screenRecorder.captureBitrate = currentPreset.bitrate
             bufferStartDate = Date()
             do {
                 try await screenRecorder.startCapture()
             } catch {
                 print("❌ Restart failed: \(error)")
             }
-        }
-    }
-
-    func qualityScaleValue() -> Double {
-        switch currentQuality {
-        case "Medium": return 0.85
-        case "Low": return 0.7
-        default: return 1.0
         }
     }
 

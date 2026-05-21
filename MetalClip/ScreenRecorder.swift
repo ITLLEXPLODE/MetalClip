@@ -30,8 +30,9 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     nonisolated(unsafe) private(set) var isContinuousRecording = false
 
     var maxBufferDuration: TimeInterval = 1800
-    var requestedFPS: Int = 30
-    var qualityScale: Double = 1.0
+    var captureMaxFPS: Int = 60
+    var captureTargetHeight: Int? = nil
+    var captureBitrate: Int = 30_000_000
 
     nonisolated(unsafe) private var captureWidth: Int = 1920
     nonisolated(unsafe) private var captureHeight: Int = 1080
@@ -52,18 +53,27 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         }
 
         let scaleFactor = NSScreen.main?.backingScaleFactor ?? 2.0
-        captureWidth = Int(Double(display.width) * scaleFactor * qualityScale)
-        captureHeight = Int(Double(display.height) * scaleFactor * qualityScale)
-        // H.264 requires even dimensions
-        captureWidth = captureWidth & ~1
-        captureHeight = captureHeight & ~1
+        let nativeW = Double(display.width) * scaleFactor
+        let nativeH = Double(display.height) * scaleFactor
+
+        if let targetH = captureTargetHeight {
+            let scale = Double(targetH) / nativeH
+            captureWidth = Int(nativeW * scale) & ~1
+            captureHeight = targetH & ~1
+        } else {
+            captureWidth = Int(nativeW) & ~1
+            captureHeight = Int(nativeH) & ~1
+        }
+
+        let displayHz = NSScreen.main?.maximumFramesPerSecond ?? 60
+        let effectiveFPS = min(captureMaxFPS, displayHz)
 
         let filter = SCContentFilter(display: display, excludingWindows: [])
 
         let config = SCStreamConfiguration()
         config.width = captureWidth
         config.height = captureHeight
-        config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(requestedFPS))
+        config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(effectiveFPS))
         config.capturesAudio = true
         config.queueDepth = 8
         config.pixelFormat = kCVPixelFormatType_32BGRA
@@ -77,16 +87,17 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             directory: tempDir,
             maxDuration: maxBufferDuration,
             width: captureWidth,
-            height: captureHeight
+            height: captureHeight,
+            bitrate: captureBitrate
         )
 
         stream = SCStream(filter: filter, configuration: config, delegate: self)
-        try stream?.addStreamOutput(self, type: .screen, sampleHandlerQueue: .global(qos: .userInitiated))
-        try stream?.addStreamOutput(self, type: .audio, sampleHandlerQueue: .global(qos: .userInitiated))
+        try stream?.addStreamOutput(self, type: .screen, sampleHandlerQueue: .global(qos: .utility))
+        try stream?.addStreamOutput(self, type: .audio, sampleHandlerQueue: .global(qos: .utility))
 
         try await stream?.startCapture()
         isCapturing = true
-        print("✅ Screen capture started (\(captureWidth)x\(captureHeight) @ \(requestedFPS)fps)")
+        print("✅ Screen capture started (\(captureWidth)x\(captureHeight) @ \(effectiveFPS)fps, display=\(displayHz)hz)")
     }
 
     func stopCapture() async {
@@ -152,6 +163,7 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
                 AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
             ],
             AVVideoCompressionPropertiesKey: [
+                AVVideoAverageBitRateKey: captureBitrate,
                 AVVideoAllowFrameReorderingKey: false,
             ],
         ]

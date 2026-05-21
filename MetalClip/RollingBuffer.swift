@@ -24,15 +24,20 @@ final class RollingBuffer: @unchecked Sendable {
     private var droppedFrameCount = 0
 
     private let queue = DispatchQueue(label: "com.metalclip.rollingbuffer")
+    private let rotationGroup = DispatchGroup()
+    private let pendingLock = NSLock()
+    private var pendingSegments: [Segment] = []
 
     private let width: Int
     private let height: Int
+    private let bitrate: Int
 
-    init(directory: URL, maxDuration: TimeInterval, width: Int, height: Int) {
+    init(directory: URL, maxDuration: TimeInterval, width: Int, height: Int, bitrate: Int = 30_000_000) {
         self.directory = directory
         self.maxDuration = maxDuration
         self.width = width
         self.height = height
+        self.bitrate = bitrate
     }
 
     // MARK: - Append Samples
@@ -93,10 +98,19 @@ final class RollingBuffer: @unchecked Sendable {
         }
     }
 
+    private func collectPendingSegments() {
+        pendingLock.lock()
+        let pending = pendingSegments
+        pendingSegments.removeAll()
+        pendingLock.unlock()
+        segments.append(contentsOf: pending)
+    }
+
     private func rotateIfNeeded() {
+        collectPendingSegments()
         guard let start = currentSegmentStart else { return }
         if Date().timeIntervalSince(start) >= segmentDuration {
-            finalizeCurrentSegment()
+            finalizeCurrentSegmentAsync()
             startNewSegment()
             cleanupOldSegments()
         }
@@ -119,7 +133,7 @@ final class RollingBuffer: @unchecked Sendable {
                     AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
                 ],
                 AVVideoCompressionPropertiesKey: [
-                    AVVideoAverageBitRateKey: 40_000_000,
+                    AVVideoAverageBitRateKey: bitrate,
                     AVVideoAllowFrameReorderingKey: false,
                 ],
             ]
@@ -191,6 +205,55 @@ final class RollingBuffer: @unchecked Sendable {
         currentSegmentStart = nil
     }
 
+    private func finalizeCurrentSegmentAsync() {
+        guard let writer = currentWriter else { return }
+
+        videoInput?.markAsFinished()
+        audioInput?.markAsFinished()
+
+        let url = writer.outputURL
+        let startTime = currentSegmentStart ?? Date()
+        let endTime = Date()
+        let vCount = videoFrameCount
+        let aCount = audioFrameCount
+
+        currentWriter = nil
+        videoInput = nil
+        audioInput = nil
+        sessionStarted = false
+        currentSegmentStart = nil
+        videoFrameCount = 0
+        audioFrameCount = 0
+        droppedFrameCount = 0
+
+        rotationGroup.enter()
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let semaphore = DispatchSemaphore(value: 0)
+            writer.finishWriting { semaphore.signal() }
+            semaphore.wait()
+
+            let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+            print("📼 Segment done: v=\(vCount) a=\(aCount) size=\(fileSize/1024)KB status=\(writer.status.rawValue)")
+
+            if writer.status == .failed {
+                print("❌ Segment write failed: \(writer.error?.localizedDescription ?? "unknown")")
+            }
+
+            if writer.status == .completed, fileSize > 0 {
+                self?.pendingLock.lock()
+                self?.pendingSegments.append(Segment(
+                    url: url,
+                    startTime: startTime,
+                    endTime: endTime,
+                    isFinalized: true
+                ))
+                self?.pendingLock.unlock()
+            }
+
+            self?.rotationGroup.leave()
+        }
+    }
+
     private func cleanupOldSegments() {
         let cutoff = Date().addingTimeInterval(-maxDuration)
         let old = segments.filter { $0.endTime < cutoff }
@@ -209,6 +272,8 @@ final class RollingBuffer: @unchecked Sendable {
                 return
             }
 
+            self.rotationGroup.wait()
+            self.collectPendingSegments()
             self.finalizeCurrentSegment()
             self.startNewSegment()
 
@@ -246,6 +311,8 @@ final class RollingBuffer: @unchecked Sendable {
     func takeSnapshot() -> [URL] {
         var result: [URL] = []
         queue.sync {
+            rotationGroup.wait()
+            collectPendingSegments()
             finalizeCurrentSegment()
             startNewSegment()
             result = segments.filter(\.isFinalized).map(\.url)
@@ -257,6 +324,8 @@ final class RollingBuffer: @unchecked Sendable {
 
     func finalize() {
         queue.sync {
+            rotationGroup.wait()
+            collectPendingSegments()
             finalizeCurrentSegment()
             for seg in segments {
                 try? FileManager.default.removeItem(at: seg.url)
