@@ -1,6 +1,6 @@
 import Cocoa
 
-class CustomPresetWindowController: NSObject {
+class CustomPresetWindowController: NSObject, NSTextFieldDelegate {
 
     private var window: NSWindow!
     private var nameField: NSTextField!
@@ -47,6 +47,7 @@ class CustomPresetWindowController: NSObject {
         nameField = NSTextField()
         nameField.translatesAutoresizingMaskIntoConstraints = false
         nameField.placeholderString = "My Preset"
+        nameField.delegate = self
         content.addSubview(nameField)
 
         let resLabel = NSTextField(labelWithString: "Resolution:")
@@ -183,6 +184,13 @@ class CustomPresetWindowController: NSObject {
         let computed = autoBitrate(height: selectedHeight(), fps: selectedFPS())
         let mbps = computed / 1_000_000
         bitratePopup.itemArray.first?.title = "Auto (\(mbps) Mbps)"
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        guard let field = obj.object as? NSTextField, field === nameField else { return }
+        if field.stringValue.count > 15 {
+            field.stringValue = String(field.stringValue.prefix(15))
+        }
     }
 
     @objc private func settingChanged() {

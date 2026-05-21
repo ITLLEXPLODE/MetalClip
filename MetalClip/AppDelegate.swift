@@ -42,11 +42,12 @@ enum CaptureQualityPreset: String, CaseIterable {
     case maximum
 
     var displayName: String {
+        let mbps = bitrate / 1_000_000
         switch self {
-        case .performance: return "Performance 1080p60"
-        case .balanced: return "Balanced 1440p60"
-        case .quality: return "Quality 4K60"
-        case .maximum: return "Maximum 4K120"
+        case .performance: return "Performance 1080p60 \(mbps)Mbps"
+        case .balanced: return "Balanced 1440p60 \(mbps)Mbps"
+        case .quality: return "Quality 4K60 \(mbps)Mbps"
+        case .maximum: return "Maximum 4K120 \(mbps)Mbps"
         }
     }
 
@@ -88,8 +89,9 @@ struct CustomPreset: Codable, Equatable {
 
     var displayName: String {
         let res = height >= 2160 ? "4K" : "\(height)p"
-        let fps = maxFPS == 0 ? "Match" : "\(maxFPS)"
-        return "\(name) \(res)\(fps)"
+        let fpsStr = maxFPS == 0 ? "Match" : "\(maxFPS)"
+        let mbps = effectiveBitrate / 1_000_000
+        return "\(name) \(res)\(fpsStr) \(mbps)Mbps"
     }
 
     var effectiveBitrate: Int {
@@ -155,12 +157,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         loadSettings()
         bufferStartDate = Date()
-        setupMenuBar()
-        setupHotKeys()
-        setupCustomClipWindow()
-        setupCustomPresetWindow()
-        clipPlayer = ClipPlayerWindowController()
-        startScreenCapture()
 
         isLowPowerActive = ProcessInfo.processInfo.isLowPowerModeEnabled
         NotificationCenter.default.addObserver(
@@ -169,6 +165,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             name: Notification.Name("NSProcessInfoPowerStateDidChangeNotification"),
             object: nil
         )
+
+        setupMenuBar()
+        setupHotKeys()
+        setupCustomClipWindow()
+        setupCustomPresetWindow()
+        clipPlayer = ClipPlayerWindowController()
+        startScreenCapture()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -215,12 +218,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func activePresetParams() -> (maxFPS: Int, targetHeight: Int?, bitrate: Int) {
+        let cap = isLowPowerActive ? 60 : Int.max
         if let name = selectedCustomPresetName,
            let custom = customPresets.first(where: { $0.name == name }) {
-            let fps = custom.maxFPS == 0 ? Int.max : custom.maxFPS
+            let fps = custom.maxFPS == 0 ? cap : min(custom.maxFPS, cap)
             return (fps, custom.targetHeight, custom.effectiveBitrate)
         }
-        return (currentPreset.maxFPS, currentPreset.targetHeight, currentPreset.bitrate)
+        return (min(currentPreset.maxFPS, cap), currentPreset.targetHeight, currentPreset.bitrate)
     }
 
     func startScreenCapture() {
@@ -266,8 +270,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         var statusText = isRecording ? "● Recording in Progress..." : "MetalClip — Ready"
         if isLowPowerActive {
-            let displayHz = NSScreen.main?.maximumFramesPerSecond ?? 60
-            statusText += " · Low Power (\(displayHz)fps)"
+            statusText += " · Low Power (Max 60fps)"
         }
         let statusMenuItem = NSMenuItem(
             title: statusText,
@@ -648,13 +651,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         customPresetWindowController = CustomPresetWindowController()
         customPresetWindowController.onAdd = { [weak self] preset in
             guard let self else { return }
-            if self.customPresets.contains(where: { $0.name == preset.name }) {
-                let alert = NSAlert()
-                alert.messageText = "Duplicate Name"
-                alert.informativeText = "A preset named '\(preset.name)' already exists."
-                alert.runModal()
-                return
+
+            let displayHz = NSScreen.main?.maximumFramesPerSecond ?? 60
+            let newFPS = preset.maxFPS == 0 ? displayHz : preset.maxFPS
+            let newBitrate = preset.effectiveBitrate
+
+            for builtin in CaptureQualityPreset.allCases {
+                let builtinHeight = builtin.targetHeight ?? 2160
+                if builtinHeight == preset.height && builtin.maxFPS == newFPS && builtin.bitrate == newBitrate {
+                    let alert = NSAlert()
+                    alert.messageText = "Duplicate Settings"
+                    alert.informativeText = "A preset with these settings already exists (\(builtin.displayName))."
+                    alert.runModal()
+                    return
+                }
             }
+
+            for existing in self.customPresets {
+                let existFPS = existing.maxFPS == 0 ? displayHz : existing.maxFPS
+                let existBitrate = existing.effectiveBitrate
+                if existing.height == preset.height && existFPS == newFPS && existBitrate == newBitrate {
+                    let alert = NSAlert()
+                    alert.messageText = "Duplicate Settings"
+                    alert.informativeText = "A preset with these settings already exists (\(existing.displayName))."
+                    alert.runModal()
+                    return
+                }
+            }
+
             self.customPresets.append(preset)
             self.saveSettings()
             self.rebuildMenu()
@@ -727,8 +751,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func showLowPowerPopup() {
-        let displayHz = NSScreen.main?.maximumFramesPerSecond ?? 60
-
         let width: CGFloat = 340
         let height: CGFloat = 50
         let screen = NSScreen.main
@@ -756,7 +778,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         content.layer?.cornerRadius = 10
         popup.contentView = content
 
-        let label = NSTextField(labelWithString: "Low Power Mode — capture limited to \(displayHz)fps")
+        let label = NSTextField(labelWithString: "Low Power Mode — capture limited to Max 60fps")
         label.textColor = .white
         label.font = .systemFont(ofSize: 13, weight: .medium)
         label.alignment = .center
