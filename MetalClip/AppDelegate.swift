@@ -103,6 +103,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var customPresetWindowController: CustomPresetWindowController!
     var isLowPowerActive = false
     var lowPowerPopupWindow: NSWindow?
+    var currentBufferMinutes: Int = 30
+    var skipShrinkWarning: Bool = false
 
     let saveClipHotKey = HotKey(
         keyCode: 18,
@@ -118,6 +120,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     )
 
     let clipLengthPresets = [30, 60, 120, 300, 600, 1800]
+    let bufferSizePresets = [3, 5, 10, 15, 30]
 
     // MARK: - App Lifecycle
 
@@ -154,12 +157,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         defaults.register(defaults: [
             "clipLength": 120,
             "captureQuality": CaptureQualityPreset.balanced.rawValue,
-            "microphone": "Off"
+            "microphone": "Off",
+            "bufferMinutes": 30,
+            "skipShrinkWarning": false
         ])
         currentClipLength = defaults.integer(forKey: "clipLength")
         currentPreset = CaptureQualityPreset(rawValue: defaults.string(forKey: "captureQuality") ?? "") ?? .balanced
         currentMicrophone = defaults.string(forKey: "microphone") ?? "Off"
         selectedCustomPresetName = defaults.string(forKey: "selectedCustomPreset")
+        currentBufferMinutes = defaults.integer(forKey: "bufferMinutes")
+        if currentBufferMinutes <= 0 { currentBufferMinutes = 30 }
+        skipShrinkWarning = defaults.bool(forKey: "skipShrinkWarning")
         if let data = defaults.data(forKey: "customPresets"),
            let decoded = try? JSONDecoder().decode([CustomPreset].self, from: data) {
             customPresets = decoded
@@ -172,6 +180,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         defaults.set(currentPreset.rawValue, forKey: "captureQuality")
         defaults.set(currentMicrophone, forKey: "microphone")
         defaults.set(selectedCustomPresetName, forKey: "selectedCustomPreset")
+        defaults.set(currentBufferMinutes, forKey: "bufferMinutes")
+        defaults.set(skipShrinkWarning, forKey: "skipShrinkWarning")
         if let data = try? JSONEncoder().encode(customPresets) {
             defaults.set(data, forKey: "customPresets")
         }
@@ -181,7 +191,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func availableBufferSeconds() -> Int {
         let elapsed = Int(Date().timeIntervalSince(bufferStartDate))
-        return min(elapsed, 1800)
+        return min(elapsed, currentBufferMinutes * 60)
     }
 
     func activePresetParams() -> (maxFPS: Int, targetHeight: Int?, bitrate: Int) {
@@ -197,7 +207,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func startScreenCapture() {
         let params = activePresetParams()
         screenRecorder = ScreenRecorder()
-        screenRecorder.maxBufferDuration = 1800
+        screenRecorder.maxBufferDuration = TimeInterval(currentBufferMinutes * 60)
         screenRecorder.captureMaxFPS = params.maxFPS
         screenRecorder.captureTargetHeight = params.targetHeight
         screenRecorder.captureBitrate = params.bitrate
@@ -281,7 +291,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
 
         // Clip Length submenu
+        let bufferSeconds = currentBufferMinutes * 60
         let clipLengthMenu = NSMenu()
+        clipLengthMenu.autoenablesItems = false
         for seconds in clipLengthPresets {
             let item = NSMenuItem(
                 title: formatDuration(seconds),
@@ -291,11 +303,48 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             item.target = self
             item.tag = seconds
             if seconds == currentClipLength { item.state = .on }
+            if seconds > bufferSeconds { item.isEnabled = false }
             clipLengthMenu.addItem(item)
         }
         let clipLengthItem = NSMenuItem(title: "Clip Length", action: nil, keyEquivalent: "")
         clipLengthItem.submenu = clipLengthMenu
         menu.addItem(clipLengthItem)
+
+        // Buffer Size submenu
+        let bufferMenu = NSMenu()
+        let isCustomValue = !bufferSizePresets.contains(currentBufferMinutes)
+        for minutes in bufferSizePresets {
+            let item = NSMenuItem(
+                title: "\(minutes) minutes",
+                action: #selector(setBufferSizeAction(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.tag = minutes
+            if minutes == currentBufferMinutes { item.state = .on }
+            bufferMenu.addItem(item)
+        }
+        if isCustomValue {
+            let customCurrent = NSMenuItem(
+                title: "\(currentBufferMinutes) minutes",
+                action: nil,
+                keyEquivalent: ""
+            )
+            customCurrent.state = .on
+            customCurrent.isEnabled = false
+            bufferMenu.addItem(customCurrent)
+        }
+        bufferMenu.addItem(NSMenuItem.separator())
+        let customBufferItem = NSMenuItem(
+            title: "Custom...",
+            action: #selector(customBufferSizeAction),
+            keyEquivalent: ""
+        )
+        customBufferItem.target = self
+        bufferMenu.addItem(customBufferItem)
+        let bufferItem = NSMenuItem(title: "Buffer Size", action: nil, keyEquivalent: "")
+        bufferItem.submenu = bufferMenu
+        menu.addItem(bufferItem)
 
         // Quality Preset submenu
         let presetMenu = NSMenu()
@@ -504,6 +553,92 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         rebuildMenu()
     }
 
+    @objc func setBufferSizeAction(_ sender: NSMenuItem) {
+        let newMinutes = sender.tag
+        guard newMinutes != currentBufferMinutes else { return }
+        applyBufferSize(newMinutes)
+    }
+
+    @objc func customBufferSizeAction() {
+        let alert = NSAlert()
+        alert.messageText = "Custom Buffer Size"
+        alert.informativeText = "Enter buffer size in minutes (3–30):"
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 80, height: 24))
+        field.stringValue = "\(currentBufferMinutes)"
+        alert.accessoryView = field
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard let value = Int(field.stringValue), value >= 3, value <= 30 else {
+            let err = NSAlert()
+            err.messageText = "Invalid Value"
+            err.informativeText = "Enter a number between 3 and 30."
+            err.runModal()
+            return
+        }
+        guard value != currentBufferMinutes else { return }
+        applyBufferSize(value)
+    }
+
+    func applyBufferSize(_ newMinutes: Int) {
+        let isShrinking = newMinutes < currentBufferMinutes
+        let available = availableBufferSeconds()
+
+        if isShrinking && available > 0 && !skipShrinkWarning {
+            let alert = NSAlert()
+            alert.messageText = "Shrink Buffer?"
+            alert.informativeText = "Reducing buffer to \(newMinutes) min will delete older recorded content (currently \(formatDuration(available)) buffered). Save it first?"
+            alert.addButton(withTitle: "Save & Shrink")
+            alert.addButton(withTitle: "Discard")
+            alert.addButton(withTitle: "Cancel")
+            alert.showsSuppressionButton = true
+            alert.suppressionButton?.title = "Don't ask again"
+
+            let response = alert.runModal()
+
+            if alert.suppressionButton?.state == .on {
+                skipShrinkWarning = true
+            }
+
+            if response == .alertThirdButtonReturn { return }
+
+            if response == .alertFirstButtonReturn {
+                guard let rollingBuffer = screenRecorder.rollingBuffer else { return }
+                let snapshotURLs = rollingBuffer.takeSnapshot()
+                let outputURL = clipsDirectory().appendingPathComponent("\(clipFilename()).mp4")
+                Task { [weak self] in
+                    do {
+                        try await ClipExporter.export(
+                            segmentURLs: snapshotURLs,
+                            lastSeconds: TimeInterval(available),
+                            to: outputURL,
+                            quality: "High"
+                        )
+                        DispatchQueue.main.async {
+                            self?.clipPlayer.show(url: outputURL)
+                        }
+                    } catch {
+                        print("❌ Buffer save failed: \(error)")
+                    }
+                }
+            }
+        }
+
+        currentBufferMinutes = newMinutes
+
+        let newBufferSeconds = newMinutes * 60
+        if currentClipLength > newBufferSeconds {
+            let validPresets = clipLengthPresets.filter { $0 <= newBufferSeconds }
+            currentClipLength = validPresets.last ?? newBufferSeconds
+        }
+
+        saveSettings()
+        rebuildMenu()
+        restartCapture()
+    }
+
     func offerBufferSave(presetName: String) -> Bool {
         let available = availableBufferSeconds()
         guard available > 0 else { return true }
@@ -561,7 +696,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let params = activePresetParams()
             await screenRecorder.stopCapture()
             screenRecorder = ScreenRecorder()
-            screenRecorder.maxBufferDuration = 1800
+            screenRecorder.maxBufferDuration = TimeInterval(currentBufferMinutes * 60)
             screenRecorder.captureMaxFPS = params.maxFPS
             screenRecorder.captureTargetHeight = params.targetHeight
             screenRecorder.captureBitrate = params.bitrate
