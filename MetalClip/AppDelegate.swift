@@ -1,38 +1,6 @@
 import Cocoa
 import Carbon
 
-// MARK: - Recording Indicator
-
-class RecordingIndicatorWindow: NSWindow {
-    init() {
-        let size: CGFloat = 12
-        let screen = NSScreen.main
-        let origin = NSPoint(
-            x: (screen?.frame.maxX ?? 200) - size - 20,
-            y: (screen?.frame.maxY ?? 200) - size - 8
-        )
-        super.init(
-            contentRect: NSRect(origin: origin, size: NSSize(width: size, height: size)),
-            styleMask: .borderless,
-            backing: .buffered,
-            defer: false
-        )
-        isOpaque = false
-        backgroundColor = .clear
-        level = .floating
-        sharingType = .none
-        collectionBehavior = [.canJoinAllSpaces, .stationary]
-        ignoresMouseEvents = true
-        hasShadow = false
-
-        let dot = NSView(frame: NSRect(x: 0, y: 0, width: size, height: size))
-        dot.wantsLayer = true
-        dot.layer?.backgroundColor = NSColor.red.cgColor
-        dot.layer?.cornerRadius = size / 2
-        contentView = dot
-    }
-}
-
 // MARK: - Capture Quality Preset
 
 enum CaptureQualityPreset: String, CaseIterable {
@@ -122,7 +90,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var hotKeyManager: HotKeyManager!
     var customClipWindowController: CustomClipWindowController!
     var screenRecorder: ScreenRecorder!
-    var recordingIndicator: RecordingIndicatorWindow?
     var clipPlayer: ClipPlayerWindowController!
 
     var bufferStartDate: Date!
@@ -285,16 +252,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let saveClipItem = NSMenuItem(
             title: "Save Clip (Last \(formatDuration(currentClipLength)))",
             action: #selector(saveClipAction),
-            keyEquivalent: ""
+            keyEquivalent: "1"
         )
+        saveClipItem.keyEquivalentModifierMask = [.command, .shift]
         saveClipItem.target = self
         menu.addItem(saveClipItem)
 
         let customItem = NSMenuItem(
             title: "Save Custom Clip...",
             action: #selector(saveCustomClipAction),
-            keyEquivalent: ""
+            keyEquivalent: "2"
         )
+        customItem.keyEquivalentModifierMask = [.command, .shift]
         customItem.target = self
         menu.addItem(customItem)
 
@@ -303,8 +272,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let recordingItem = NSMenuItem(
             title: isRecording ? "■ Stop Recording" : "● Start Recording",
             action: #selector(toggleRecordingAction),
-            keyEquivalent: ""
+            keyEquivalent: "r"
         )
+        recordingItem.keyEquivalentModifierMask = [.command, .shift]
         recordingItem.target = self
         menu.addItem(recordingItem)
 
@@ -379,22 +349,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         presetItem.submenu = presetMenu
         menu.addItem(presetItem)
 
-        // Microphone submenu
-        let micMenu = NSMenu()
-        let micOptions = ["Off", "MacBook Pro Microphone"]
-        for micName in micOptions {
-            let item = NSMenuItem(
-                title: micName,
-                action: #selector(setMicrophoneAction(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = micName
-            if micName == currentMicrophone { item.state = .on }
-            micMenu.addItem(item)
-        }
-        let micItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
-        micItem.submenu = micMenu
+        let micItem = NSMenuItem(title: "Microphone (coming soon)", action: nil, keyEquivalent: "")
+        micItem.isEnabled = false
         menu.addItem(micItem)
 
         menu.addItem(NSMenuItem.separator())
@@ -520,7 +476,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func toggleRecordingAction() {
         if isRecording {
             isRecording = false
-            hideRecordingIndicator()
             rebuildMenu()
             screenRecorder.stopContinuousRecording { [weak self] url in
                 if let url {
@@ -534,25 +489,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             do {
                 try screenRecorder.startContinuousRecording(to: outputURL)
                 isRecording = true
-                showRecordingIndicator()
             } catch {
                 print("❌ Recording failed: \(error)")
             }
             rebuildMenu()
         }
-    }
-
-    // MARK: - Recording Indicator
-
-    func showRecordingIndicator() {
-        if recordingIndicator == nil {
-            recordingIndicator = RecordingIndicatorWindow()
-        }
-        recordingIndicator?.orderFront(nil)
-    }
-
-    func hideRecordingIndicator() {
-        recordingIndicator?.orderOut(nil)
     }
 
     // MARK: - Settings Actions
@@ -630,14 +571,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 print("❌ Restart failed: \(error)")
             }
-        }
-    }
-
-    @objc func setMicrophoneAction(_ sender: NSMenuItem) {
-        if let micName = sender.representedObject as? String {
-            currentMicrophone = micName
-            saveSettings()
-            rebuildMenu()
         }
     }
 

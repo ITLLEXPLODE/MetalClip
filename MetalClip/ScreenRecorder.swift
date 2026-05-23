@@ -37,6 +37,9 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     nonisolated(unsafe) private var captureWidth: Int = 1920
     nonisolated(unsafe) private var captureHeight: Int = 1080
 
+    nonisolated(unsafe) private var fpsCounter: Int = 0
+    nonisolated(unsafe) private var fpsTimestamp: Date = Date()
+
     // MARK: - Capture Lifecycle
 
     func startCapture() async throws {
@@ -92,8 +95,8 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         )
 
         stream = SCStream(filter: filter, configuration: config, delegate: self)
-        try stream?.addStreamOutput(self, type: .screen, sampleHandlerQueue: .global(qos: .utility))
-        try stream?.addStreamOutput(self, type: .audio, sampleHandlerQueue: .global(qos: .utility))
+        try stream?.addStreamOutput(self, type: .screen, sampleHandlerQueue: .global(qos: .userInitiated))
+        try stream?.addStreamOutput(self, type: .audio, sampleHandlerQueue: .global(qos: .userInitiated))
 
         try await stream?.startCapture()
         isCapturing = true
@@ -117,6 +120,14 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             switch type {
             case .screen:
                 guard sampleBuffer.imageBuffer != nil else { return }
+                fpsCounter += 1
+                let now = Date()
+                if now.timeIntervalSince(fpsTimestamp) >= 5.0 {
+                    let fps = Double(fpsCounter) / now.timeIntervalSince(fpsTimestamp)
+                    print("📊 Capture FPS: \(String(format: "%.1f", fps))")
+                    fpsCounter = 0
+                    fpsTimestamp = now
+                }
                 rollingBuffer?.appendVideoSample(sampleBuffer)
                 if isContinuousRecording {
                     appendToContinuous(sampleBuffer, isVideo: true)
