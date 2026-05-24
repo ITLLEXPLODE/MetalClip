@@ -32,6 +32,7 @@ struct HotKey: Equatable {
         case 21: return "4"
         case 22: return "6"
         case 23: return "5"
+        case 37: return "L"
         default: return "Key\(code)"
         }
     }

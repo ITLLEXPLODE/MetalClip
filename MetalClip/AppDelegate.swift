@@ -90,7 +90,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var hotKeyManager: HotKeyManager!
     var customClipWindowController: CustomClipWindowController!
     var screenRecorder: ScreenRecorder!
-    var clipPlayer: ClipPlayerWindowController!
+    var clipLibrary: ClipLibrary!
+    var clipLibraryWindow: ClipLibraryWindowController!
 
     var bufferStartDate: Date!
 
@@ -118,6 +119,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         keyCode: 15,
         modifiers: UInt32(cmdKey | shiftKey)
     )
+    let libraryHotKey = HotKey(
+        keyCode: 37,
+        modifiers: UInt32(cmdKey | shiftKey)
+    )
 
     let clipLengthPresets = [30, 60, 120, 300, 600, 1800]
     let bufferSizePresets = [3, 5, 10, 15, 30]
@@ -136,11 +141,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
+        clipLibrary = ClipLibrary(directory: clipsDirectory())
+        clipLibraryWindow = ClipLibraryWindowController(library: clipLibrary)
+
         setupMenuBar()
         setupHotKeys()
         setupCustomClipWindow()
         setupCustomPresetWindow()
-        clipPlayer = ClipPlayerWindowController()
         startScreenCapture()
     }
 
@@ -404,6 +411,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        let libraryItem = NSMenuItem(
+            title: "Open Library",
+            action: #selector(openLibraryAction),
+            keyEquivalent: "l"
+        )
+        libraryItem.keyEquivalentModifierMask = [.command, .shift]
+        libraryItem.target = self
+        menu.addItem(libraryItem)
+
         let openFolderItem = NSMenuItem(
             title: "Open Clips Folder",
             action: #selector(openClipsFolderAction),
@@ -434,6 +450,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         hotKeyManager.register(recordingHotKey) { [weak self] in
             self?.toggleRecordingAction()
+        }
+        hotKeyManager.register(libraryHotKey) { [weak self] in
+            self?.openLibraryAction()
         }
     }
 
@@ -471,7 +490,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         quality: quality
                     )
                     DispatchQueue.main.async { [weak self] in
-                        self?.clipPlayer.show(url: outputURL)
+                        self?.showInLibrary(url: outputURL)
                     }
                 } catch {
                     DispatchQueue.main.async {
@@ -483,6 +502,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+    }
+
+    // MARK: - Library
+
+    func showInLibrary(url: URL) {
+        clipLibrary.refresh()
+        clipLibraryWindow.showWindow(selectingFilename: url.lastPathComponent)
+    }
+
+    @objc func openLibraryAction() {
+        print("📚 openLibraryAction called")
+        clipLibraryWindow.showWindow()
     }
 
     // MARK: - Actions
@@ -505,7 +536,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     quality: "High"
                 )
                 DispatchQueue.main.async { [weak self] in
-                    self?.clipPlayer.show(url: outputURL)
+                    self?.showInLibrary(url: outputURL)
                 }
             } catch {
                 print("❌ Clip save failed: \(error)")
@@ -529,7 +560,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             screenRecorder.stopContinuousRecording { [weak self] url in
                 if let url {
                     DispatchQueue.main.async {
-                        self?.clipPlayer.show(url: url)
+                        self?.showInLibrary(url: url)
                     }
                 }
             }
@@ -617,7 +648,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                             quality: "High"
                         )
                         DispatchQueue.main.async {
-                            self?.clipPlayer.show(url: outputURL)
+                            self?.showInLibrary(url: outputURL)
                         }
                     } catch {
                         print("❌ Buffer save failed: \(error)")
@@ -666,7 +697,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         quality: "High"
                     )
                     DispatchQueue.main.async {
-                        self?.clipPlayer.show(url: outputURL)
+                        self?.showInLibrary(url: outputURL)
                     }
                 } catch {
                     print("❌ Buffer save failed: \(error)")

@@ -1,0 +1,205 @@
+import Foundation
+import AVFoundation
+
+protocol ClipLibraryDelegate: AnyObject {
+    func clipLibraryDidUpdate()
+}
+
+class ClipLibrary {
+
+    weak var delegate: ClipLibraryDelegate?
+
+    private(set) var clips: [ClipMetadata] = []
+    let directory: URL
+    private let metadataURL: URL
+
+    init(directory: URL) {
+        self.directory = directory
+        self.metadataURL = directory.appendingPathComponent(".metadata.json")
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    // MARK: - Load & Scan
+
+    func refresh() {
+        let existing = loadMetadataFile()
+        let fm = FileManager.default
+        let mp4s = (try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.fileSizeKey, .creationDateKey]))?.filter { $0.pathExtension == "mp4" } ?? []
+
+        let existingByFilename = Dictionary(uniqueKeysWithValues: existing.map { ($0.filename, $0) })
+        let currentFilenames = Set(mp4s.map(\.lastPathComponent))
+
+        var merged: [ClipMetadata] = []
+
+        for url in mp4s {
+            let name = url.lastPathComponent
+            if var meta = existingByFilename[name] {
+                meta.fileSize = fileSize(url)
+                merged.append(meta)
+            } else {
+                let meta = buildMetadata(for: url)
+                merged.append(meta)
+            }
+        }
+
+        clips = merged.sorted { $0.dateCreated > $1.dateCreated }
+        saveMetadataFile()
+        delegate?.clipLibraryDidUpdate()
+    }
+
+    // MARK: - CRUD
+
+    func rename(clip: ClipMetadata, to newName: String) -> Bool {
+        guard let index = clips.firstIndex(where: { $0.id == clip.id }) else { return false }
+        let oldURL = directory.appendingPathComponent(clip.filename)
+        let sanitized = newName.trimmingCharacters(in: .whitespaces)
+        guard !sanitized.isEmpty else { return false }
+        let newFilename = sanitized.hasSuffix(".mp4") ? sanitized : "\(sanitized).mp4"
+        let newURL = directory.appendingPathComponent(newFilename)
+        guard !FileManager.default.fileExists(atPath: newURL.path) else { return false }
+
+        do {
+            try FileManager.default.moveItem(at: oldURL, to: newURL)
+            clips[index].filename = newFilename
+            saveMetadataFile()
+            delegate?.clipLibraryDidUpdate()
+            return true
+        } catch {
+            print("❌ Rename failed: \(error)")
+            return false
+        }
+    }
+
+    func delete(clip: ClipMetadata) {
+        let url = directory.appendingPathComponent(clip.filename)
+        try? FileManager.default.removeItem(at: url)
+        clips.removeAll { $0.id == clip.id }
+        saveMetadataFile()
+        delegate?.clipLibraryDidUpdate()
+    }
+
+    func clip(forFilename filename: String) -> ClipMetadata? {
+        clips.first { $0.filename == filename }
+    }
+
+    // FUTURE: filter(byGameLabel:) -> [ClipMetadata]
+    // FUTURE: search(query:) -> [ClipMetadata]
+    // FUTURE: generateThumbnail(for:) -> URL
+    // FUTURE: compress(clip:) -> ClipMetadata
+    // FUTURE: clips(inPlaylist:) -> [ClipMetadata]
+
+    // MARK: - Sorting & Grouping
+
+    enum SortOrder: Int, CaseIterable {
+        case newestFirst, oldestFirst, longestFirst, shortestFirst
+
+        var title: String {
+            switch self {
+            case .newestFirst: return "Newest First"
+            case .oldestFirst: return "Oldest First"
+            case .longestFirst: return "Longest First"
+            case .shortestFirst: return "Shortest First"
+            }
+        }
+    }
+
+    func sorted(by order: SortOrder) -> [ClipMetadata] {
+        switch order {
+        case .newestFirst: return clips.sorted { $0.dateCreated > $1.dateCreated }
+        case .oldestFirst: return clips.sorted { $0.dateCreated < $1.dateCreated }
+        case .longestFirst: return clips.sorted { $0.duration > $1.duration }
+        case .shortestFirst: return clips.sorted { $0.duration < $1.duration }
+        }
+    }
+
+    struct DateGroup {
+        let title: String
+        var clips: [ClipMetadata]
+    }
+
+    func grouped(by order: SortOrder) -> [DateGroup] {
+        let sorted = sorted(by: order)
+        guard order == .newestFirst || order == .oldestFirst else {
+            return [DateGroup(title: "", clips: sorted)]
+        }
+
+        let calendar = Calendar.current
+        var today: [ClipMetadata] = []
+        var yesterday: [ClipMetadata] = []
+        var earlier: [ClipMetadata] = []
+
+        for clip in sorted {
+            if calendar.isDateInToday(clip.dateCreated) {
+                today.append(clip)
+            } else if calendar.isDateInYesterday(clip.dateCreated) {
+                yesterday.append(clip)
+            } else {
+                earlier.append(clip)
+            }
+        }
+
+        var groups: [DateGroup] = []
+        if !today.isEmpty { groups.append(DateGroup(title: "Today", clips: today)) }
+        if !yesterday.isEmpty { groups.append(DateGroup(title: "Yesterday", clips: yesterday)) }
+        if !earlier.isEmpty { groups.append(DateGroup(title: "Earlier", clips: earlier)) }
+        return groups
+    }
+
+    // MARK: - Metadata Persistence
+
+    private func loadMetadataFile() -> [ClipMetadata] {
+        guard let data = try? Data(contentsOf: metadataURL),
+              let decoded = try? JSONDecoder().decode([ClipMetadata].self, from: data) else { return [] }
+        return decoded
+    }
+
+    private func saveMetadataFile() {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        guard let data = try? encoder.encode(clips) else { return }
+        try? data.write(to: metadataURL, options: .atomic)
+    }
+
+    // MARK: - Helpers
+
+    private func buildMetadata(for url: URL) -> ClipMetadata {
+        let fm = FileManager.default
+        let attrs = try? fm.attributesOfItem(atPath: url.path)
+        let created = attrs?[.creationDate] as? Date ?? Date()
+        let size = (attrs?[.size] as? Int64) ?? 0
+
+        var duration: TimeInterval = 0
+        var resolution = ""
+
+        let asset = AVURLAsset(url: url)
+        let semaphore = DispatchSemaphore(value: 0)
+
+        Task.detached {
+            duration = (try? await asset.load(.duration).seconds) ?? 0
+            if let track = try? await asset.loadTracks(withMediaType: .video).first {
+                let sz = try? await track.load(.naturalSize)
+                let fps = try? await track.load(.nominalFrameRate)
+                if let sz, let fps {
+                    let h = Int(sz.height)
+                    let f = Int(round(fps))
+                    resolution = "\(h)p\(f)"
+                }
+            }
+            semaphore.signal()
+        }
+        semaphore.wait()
+
+        return ClipMetadata(
+            id: UUID(),
+            filename: url.lastPathComponent,
+            dateCreated: created,
+            duration: duration,
+            fileSize: size,
+            resolution: resolution
+        )
+    }
+
+    private func fileSize(_ url: URL) -> Int64 {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
+    }
+}
