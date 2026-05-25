@@ -27,7 +27,8 @@ class ClipCardItem: NSCollectionViewItem {
         thumbView.wantsLayer = true
         thumbView.layer?.backgroundColor = NSColor.quaternaryLabelColor.cgColor
         thumbView.layer?.cornerRadius = 6
-        // FUTURE: load thumbnailPath image here
+        thumbView.layer?.contentsGravity = .resizeAspectFill
+        thumbView.layer?.masksToBounds = true
         card.addSubview(thumbView)
 
         durationBadge = NSTextField(labelWithString: "")
@@ -98,6 +99,14 @@ class ClipCardItem: NSCollectionViewItem {
     }
 
     func configure(with clip: ClipMetadata) {
+        if let thumbPath = clip.thumbnailPath,
+           let image = NSImage(contentsOfFile: thumbPath),
+           let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            thumbView.layer?.contents = cgImage
+        } else {
+            thumbView.layer?.contents = nil
+        }
+
         durationBadge.stringValue = " \(clip.durationFormatted) "
         nameLabel.stringValue = clip.filename
 
@@ -249,6 +258,18 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
 
     func clipLibraryDidUpdate() {
         reloadClipGrid()
+        library.generateMissingThumbnails { [weak self] clipID in
+            self?.updateThumbnail(for: clipID)
+        }
+    }
+
+    private func updateThumbnail(for clipID: UUID) {
+        guard let idx = flatList.firstIndex(where: { $0.id == clipID }) else { return }
+        if let libClip = library.clips.first(where: { $0.id == clipID }) {
+            flatList[idx].thumbnailPath = libClip.thumbnailPath
+        }
+        let indexPath = IndexPath(item: idx, section: 0)
+        clipCollectionView?.reloadItems(at: [indexPath])
     }
 
     // MARK: - Window

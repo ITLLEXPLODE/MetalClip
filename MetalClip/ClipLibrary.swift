@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import ImageIO
 
 protocol ClipLibraryDelegate: AnyObject {
     func clipLibraryDidUpdate()
@@ -12,11 +13,17 @@ class ClipLibrary {
     private(set) var clips: [ClipMetadata] = []
     let directory: URL
     private let metadataURL: URL
+    private var isGeneratingThumbnails = false
+
+    var thumbnailsDirectory: URL {
+        directory.appendingPathComponent(".thumbnails")
+    }
 
     init(directory: URL) {
         self.directory = directory
         self.metadataURL = directory.appendingPathComponent(".metadata.json")
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: directory.appendingPathComponent(".thumbnails"), withIntermediateDirectories: true)
     }
 
     // MARK: - Load & Scan
@@ -73,6 +80,9 @@ class ClipLibrary {
     func delete(clip: ClipMetadata) {
         let url = directory.appendingPathComponent(clip.filename)
         try? FileManager.default.removeItem(at: url)
+        if let thumbPath = clip.thumbnailPath {
+            try? FileManager.default.removeItem(atPath: thumbPath)
+        }
         clips.removeAll { $0.id == clip.id }
         saveMetadataFile()
         delegate?.clipLibraryDidUpdate()
@@ -84,9 +94,61 @@ class ClipLibrary {
 
     // FUTURE: filter(byGameLabel:) -> [ClipMetadata]
     // FUTURE: search(query:) -> [ClipMetadata]
-    // FUTURE: generateThumbnail(for:) -> URL
     // FUTURE: compress(clip:) -> ClipMetadata
     // FUTURE: clips(inPlaylist:) -> [ClipMetadata]
+
+    // MARK: - Thumbnail Generation
+
+    func generateMissingThumbnails(progress: @escaping (UUID) -> Void) {
+        guard !isGeneratingThumbnails else { return }
+
+        let clipsNeedingThumbs = clips.filter { clip in
+            guard let path = clip.thumbnailPath else { return true }
+            return !FileManager.default.fileExists(atPath: path)
+        }
+        guard !clipsNeedingThumbs.isEmpty else { return }
+
+        isGeneratingThumbnails = true
+        let dir = self.directory
+        let thumbsDir = self.thumbnailsDirectory
+
+        Task.detached { [weak self] in
+            for clip in clipsNeedingThumbs {
+                let videoURL = dir.appendingPathComponent(clip.filename)
+                let thumbURL = thumbsDir.appendingPathComponent("\(clip.id.uuidString).jpg")
+
+                do {
+                    let asset = AVURLAsset(url: videoURL)
+                    let generator = AVAssetImageGenerator(asset: asset)
+                    generator.appliesPreferredTrackTransform = true
+                    generator.maximumSize = CGSize(width: 480, height: 0)
+
+                    let midTime = CMTime(seconds: clip.duration * 0.5, preferredTimescale: 600)
+                    let (cgImage, _) = try await generator.image(at: midTime)
+
+                    guard let dest = CGImageDestinationCreateWithURL(thumbURL as CFURL, "public.jpeg" as CFString, 1, nil) else { continue }
+                    CGImageDestinationAddImage(dest, cgImage, [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
+                    CGImageDestinationFinalize(dest)
+
+                    let path = thumbURL.path
+                    await MainActor.run {
+                        guard let self else { return }
+                        if let idx = self.clips.firstIndex(where: { $0.id == clip.id }) {
+                            self.clips[idx].thumbnailPath = path
+                            self.saveMetadataFile()
+                            progress(clip.id)
+                        }
+                    }
+                } catch {
+                    continue
+                }
+            }
+
+            await MainActor.run {
+                self?.isGeneratingThumbnails = false
+            }
+        }
+    }
 
     // MARK: - Sorting & Grouping
 
