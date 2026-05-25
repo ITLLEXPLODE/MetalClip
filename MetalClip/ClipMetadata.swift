@@ -20,6 +20,7 @@ struct ClipMetadata: Codable, Identifiable, Equatable {
     var playlists: [String] = []
     // FUTURE: user notes
     var notes: String?
+    var isFavorite: Bool = false
 
     var fileSizeFormatted: String {
         let formatter = ByteCountFormatter()

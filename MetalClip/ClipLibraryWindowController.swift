@@ -14,7 +14,11 @@ class ClipCardItem: NSCollectionViewItem {
     private var gameLabel: NSTextField!
     private var detailLabel: NSTextField!
     private var dateLabel: NSTextField!
+    private var starButton: NSButton!
     private var trackingArea: NSTrackingArea?
+    private var currentIsFavorite = false
+    private var isHovering = false
+    var onFavoriteToggle: ((Bool) -> Void)?
 
     override func loadView() {
         let card = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 220))
@@ -40,6 +44,17 @@ class ClipCardItem: NSCollectionViewItem {
         durationBadge.layer?.cornerRadius = 3
         durationBadge.alignment = .center
         thumbView.addSubview(durationBadge)
+
+        starButton = NSButton(image: NSImage(systemSymbolName: "star", accessibilityDescription: "Favorite")!, target: self, action: #selector(starTapped))
+        starButton.translatesAutoresizingMaskIntoConstraints = false
+        starButton.isBordered = false
+        starButton.wantsLayer = true
+        starButton.layer?.cornerRadius = 10
+        starButton.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.5).cgColor
+        starButton.contentTintColor = .white
+        starButton.imageScaling = .scaleProportionallyDown
+        starButton.isHidden = true
+        thumbView.addSubview(starButton)
 
         nameLabel = NSTextField(labelWithString: "")
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -80,6 +95,11 @@ class ClipCardItem: NSCollectionViewItem {
             durationBadge.bottomAnchor.constraint(equalTo: thumbView.bottomAnchor, constant: -6),
             durationBadge.widthAnchor.constraint(greaterThanOrEqualToConstant: 36),
 
+            starButton.topAnchor.constraint(equalTo: thumbView.topAnchor, constant: 6),
+            starButton.trailingAnchor.constraint(equalTo: thumbView.trailingAnchor, constant: -6),
+            starButton.widthAnchor.constraint(equalToConstant: 20),
+            starButton.heightAnchor.constraint(equalToConstant: 20),
+
             nameLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 8),
             nameLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
             nameLabel.topAnchor.constraint(equalTo: thumbView.bottomAnchor, constant: 6),
@@ -119,6 +139,25 @@ class ClipCardItem: NSCollectionViewItem {
 
         detailLabel.stringValue = "\(clip.resolution) \u{00B7} \(clip.fileSizeFormatted)"
         dateLabel.stringValue = clip.relativeDateFormatted
+
+        currentIsFavorite = clip.isFavorite
+        isHovering = false
+        updateStarAppearance()
+    }
+
+    @objc private func starTapped() {
+        currentIsFavorite.toggle()
+        updateStarAppearance()
+        onFavoriteToggle?(currentIsFavorite)
+    }
+
+    private func updateStarAppearance() {
+        let symbolName = currentIsFavorite ? "star.fill" : "star"
+        starButton.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Favorite")
+        starButton.contentTintColor = currentIsFavorite ? .systemYellow : .white
+        if !isHovering {
+            starButton.isHidden = !currentIsFavorite
+        }
     }
 
     override var isSelected: Bool {
@@ -137,12 +176,18 @@ class ClipCardItem: NSCollectionViewItem {
     }
 
     override func mouseEntered(with event: NSEvent) {
+        isHovering = true
+        starButton.isHidden = false
         if !isSelected {
             view.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.04).cgColor
         }
     }
 
     override func mouseExited(with event: NSEvent) {
+        isHovering = false
+        if !currentIsFavorite {
+            starButton.isHidden = true
+        }
         if !isSelected {
             view.layer?.backgroundColor = nil
         }
@@ -156,7 +201,7 @@ class ClipCardItem: NSCollectionViewItem {
 
 // MARK: - ClipLibraryWindowController
 
-class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDataSource, NSTableViewDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, NSWindowDelegate, NSSearchFieldDelegate {
+class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDataSource, NSTableViewDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, NSWindowDelegate, NSSearchFieldDelegate, NSMenuDelegate {
 
     // MARK: - Nav
 
@@ -216,6 +261,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     private var dateChipRow: NSStackView!
     private var lengthChipRow: NSStackView!
     private var gameChipRow: NSStackView!
+    private var favoritesChipRow: NSStackView!
     private var searchCollectionView: NSCollectionView!
     private var searchScrollView: NSScrollView!
     private var searchEmptyLabel: NSTextField!
@@ -235,6 +281,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     private var selectedLengthFilters: Set<ClipLibrary.LengthFilter> = []
     private var selectedGameFilters: Set<String> = []
     private var searchResults: [ClipMetadata] = []
+    private var filterFavoritesOnly = false
 
     // MARK: - Init
 
@@ -417,6 +464,9 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         clipCollectionView.backgroundColors = [.clear]
 
         let menu = NSMenu()
+        menu.delegate = self
+        menu.addItem(NSMenuItem(title: "Add to Favorites", action: #selector(contextToggleFavorite), keyEquivalent: ""))
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Rename", action: #selector(contextRename), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Delete", action: #selector(contextDelete), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
@@ -498,6 +548,13 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         }
         searchView.addSubview(lengthChipRow)
 
+        favoritesChipRow = NSStackView()
+        favoritesChipRow.translatesAutoresizingMaskIntoConstraints = false
+        favoritesChipRow.orientation = .horizontal
+        favoritesChipRow.spacing = 6
+        favoritesChipRow.addArrangedSubview(makeChip(title: "\u{2B50} Favorites", action: #selector(favoritesChipToggled(_:)), tag: 0))
+        searchView.addSubview(favoritesChipRow)
+
         // FUTURE: game chips populate when gameLabel is set
         gameChipRow = NSStackView()
         gameChipRow.translatesAutoresizingMaskIntoConstraints = false
@@ -527,13 +584,16 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         searchCollectionView.register(ClipCardItem.self, forItemWithIdentifier: ClipCardItem.identifier)
         searchCollectionView.backgroundColors = [.clear]
 
-        let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Rename", action: #selector(contextRename), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Delete", action: #selector(contextDelete), keyEquivalent: ""))
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Show in Finder", action: #selector(contextShowInFinder), keyEquivalent: ""))
-        for item in menu.items { item.target = self }
-        searchCollectionView.menu = menu
+        let searchMenu = NSMenu()
+        searchMenu.delegate = self
+        searchMenu.addItem(NSMenuItem(title: "Add to Favorites", action: #selector(contextToggleFavorite), keyEquivalent: ""))
+        searchMenu.addItem(NSMenuItem.separator())
+        searchMenu.addItem(NSMenuItem(title: "Rename", action: #selector(contextRename), keyEquivalent: ""))
+        searchMenu.addItem(NSMenuItem(title: "Delete", action: #selector(contextDelete), keyEquivalent: ""))
+        searchMenu.addItem(NSMenuItem.separator())
+        searchMenu.addItem(NSMenuItem(title: "Show in Finder", action: #selector(contextShowInFinder), keyEquivalent: ""))
+        for item in searchMenu.items { item.target = self }
+        searchCollectionView.menu = searchMenu
 
         searchScrollView = NSScrollView()
         searchScrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -562,8 +622,11 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
             lengthChipRow.leadingAnchor.constraint(equalTo: searchView.leadingAnchor, constant: 12),
             lengthChipRow.topAnchor.constraint(equalTo: dateChipRow.bottomAnchor, constant: 6),
 
+            favoritesChipRow.leadingAnchor.constraint(equalTo: searchView.leadingAnchor, constant: 12),
+            favoritesChipRow.topAnchor.constraint(equalTo: lengthChipRow.bottomAnchor, constant: 6),
+
             gameChipRow.leadingAnchor.constraint(equalTo: searchView.leadingAnchor, constant: 12),
-            gameChipRow.topAnchor.constraint(equalTo: lengthChipRow.bottomAnchor, constant: 6),
+            gameChipRow.topAnchor.constraint(equalTo: favoritesChipRow.bottomAnchor, constant: 6),
 
             searchScrollView.leadingAnchor.constraint(equalTo: searchView.leadingAnchor),
             searchScrollView.trailingAnchor.constraint(equalTo: searchView.trailingAnchor),
@@ -791,7 +854,21 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         let item = collectionView.makeItem(withIdentifier: ClipCardItem.identifier, for: indexPath) as! ClipCardItem
         let list = collectionView == searchCollectionView ? searchResults : flatList
         if indexPath.item < list.count {
-            item.configure(with: list[indexPath.item])
+            let clip = list[indexPath.item]
+            item.configure(with: clip)
+            item.onFavoriteToggle = { [weak self] isFavorite in
+                guard let self else { return }
+                self.library.setFavorite(clip, isFavorite)
+                if let idx = self.flatList.firstIndex(where: { $0.id == clip.id }) {
+                    self.flatList[idx].isFavorite = isFavorite
+                }
+                if let idx = self.searchResults.firstIndex(where: { $0.id == clip.id }) {
+                    self.searchResults[idx].isFavorite = isFavorite
+                }
+                if self.filterFavoritesOnly {
+                    self.updateSearchResults()
+                }
+            }
         }
         return item
     }
@@ -1007,6 +1084,11 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         updateSearchResults()
     }
 
+    @objc private func favoritesChipToggled(_ sender: NSButton) {
+        filterFavoritesOnly = sender.state == .on
+        updateSearchResults()
+    }
+
     func controlTextDidChange(_ obj: Notification) {
         guard let field = obj.object as? NSSearchField, field == searchField else { return }
         searchText = field.stringValue
@@ -1014,7 +1096,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     }
 
     private func updateSearchResults() {
-        let hasActiveFilter = !searchText.isEmpty || !selectedDateFilters.isEmpty || !selectedLengthFilters.isEmpty || !selectedGameFilters.isEmpty
+        let hasActiveFilter = !searchText.isEmpty || !selectedDateFilters.isEmpty || !selectedLengthFilters.isEmpty || !selectedGameFilters.isEmpty || filterFavoritesOnly
 
         if !hasActiveFilter {
             searchResults = []
@@ -1025,7 +1107,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
             return
         }
 
-        searchResults = library.search(text: searchText, dateFilters: selectedDateFilters, lengthFilters: selectedLengthFilters, gameFilters: selectedGameFilters)
+        searchResults = library.search(text: searchText, dateFilters: selectedDateFilters, lengthFilters: selectedLengthFilters, gameFilters: selectedGameFilters, favoritesOnly: filterFavoritesOnly)
         searchCollectionView?.reloadData()
 
         if searchResults.isEmpty {
@@ -1089,6 +1171,22 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         let point = cv.convert(cv.window!.mouseLocationOutsideOfEventStream, from: nil)
         guard let indexPath = cv.indexPathForItem(at: point), indexPath.item < list.count else { return nil }
         return list[indexPath.item]
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard let clip = clipAtClickPoint() else { return }
+        for item in menu.items where item.action == #selector(contextToggleFavorite) {
+            item.title = clip.isFavorite ? "Remove from Favorites" : "Add to Favorites"
+        }
+    }
+
+    @objc private func contextToggleFavorite() {
+        guard let clip = clipAtClickPoint() else { return }
+        library.setFavorite(clip, !clip.isFavorite)
+        reloadClipGrid()
+        if currentNav == .search {
+            updateSearchResults()
+        }
     }
 
     @objc private func contextRename() {

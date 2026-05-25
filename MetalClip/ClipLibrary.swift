@@ -92,6 +92,12 @@ class ClipLibrary {
         clips.first { $0.filename == filename }
     }
 
+    func setFavorite(_ clip: ClipMetadata, _ value: Bool) {
+        guard let idx = clips.firstIndex(where: { $0.id == clip.id }) else { return }
+        clips[idx].isFavorite = value
+        saveMetadataFile()
+    }
+
     // FUTURE: compress(clip:) -> ClipMetadata
     // FUTURE: clips(inPlaylist:) -> [ClipMetadata]
 
@@ -140,9 +146,13 @@ class ClipLibrary {
         Array(Set(clips.compactMap(\.gameLabel))).sorted()
     }
 
-    func search(text: String, dateFilters: Set<DateFilter>, lengthFilters: Set<LengthFilter>, gameFilters: Set<String>) -> [ClipMetadata] {
+    func search(text: String, dateFilters: Set<DateFilter>, lengthFilters: Set<LengthFilter>, gameFilters: Set<String>, favoritesOnly: Bool = false) -> [ClipMetadata] {
         // FUTURE: add quality/tag filters here
         var results = clips
+
+        if favoritesOnly {
+            results = results.filter { $0.isFavorite }
+        }
 
         if !text.isEmpty {
             results = results.filter { $0.filename.localizedCaseInsensitiveContains(text) }
