@@ -92,10 +92,92 @@ class ClipLibrary {
         clips.first { $0.filename == filename }
     }
 
-    // FUTURE: filter(byGameLabel:) -> [ClipMetadata]
-    // FUTURE: search(query:) -> [ClipMetadata]
     // FUTURE: compress(clip:) -> ClipMetadata
     // FUTURE: clips(inPlaylist:) -> [ClipMetadata]
+
+    // MARK: - Search & Filtering
+
+    enum DateFilter: Int, CaseIterable {
+        case today, thisWeek, thisMonth, all
+
+        var title: String {
+            switch self {
+            case .today: return "Today"
+            case .thisWeek: return "This Week"
+            case .thisMonth: return "This Month"
+            case .all: return "All"
+            }
+        }
+    }
+
+    enum LengthFilter: Int, CaseIterable {
+        case upTo30s, thirtyTo60s, oneToFive, fiveToTen, tenToTwenty, twentyPlus
+
+        var title: String {
+            switch self {
+            case .upTo30s: return "~30s"
+            case .thirtyTo60s: return "30s~1min"
+            case .oneToFive: return "1~5min"
+            case .fiveToTen: return "5~10min"
+            case .tenToTwenty: return "10~20min"
+            case .twentyPlus: return "20min+"
+            }
+        }
+
+        func matches(duration: TimeInterval) -> Bool {
+            switch self {
+            case .upTo30s: return duration < 30
+            case .thirtyTo60s: return duration >= 30 && duration < 60
+            case .oneToFive: return duration >= 60 && duration < 300
+            case .fiveToTen: return duration >= 300 && duration < 600
+            case .tenToTwenty: return duration >= 600 && duration < 1200
+            case .twentyPlus: return duration >= 1200
+            }
+        }
+    }
+
+    var distinctGameLabels: [String] {
+        Array(Set(clips.compactMap(\.gameLabel))).sorted()
+    }
+
+    func search(text: String, dateFilters: Set<DateFilter>, lengthFilters: Set<LengthFilter>, gameFilters: Set<String>) -> [ClipMetadata] {
+        // FUTURE: add quality/tag filters here
+        var results = clips
+
+        if !text.isEmpty {
+            results = results.filter { $0.filename.localizedCaseInsensitiveContains(text) }
+        }
+
+        if !dateFilters.isEmpty && !dateFilters.contains(.all) {
+            let calendar = Calendar.current
+            let now = Date()
+            results = results.filter { clip in
+                dateFilters.contains { filter in
+                    switch filter {
+                    case .today: return calendar.isDateInToday(clip.dateCreated)
+                    case .thisWeek: return clip.dateCreated >= calendar.date(byAdding: .day, value: -7, to: now)!
+                    case .thisMonth: return clip.dateCreated >= calendar.date(byAdding: .day, value: -30, to: now)!
+                    case .all: return true
+                    }
+                }
+            }
+        }
+
+        if !lengthFilters.isEmpty {
+            results = results.filter { clip in
+                lengthFilters.contains { $0.matches(duration: clip.duration) }
+            }
+        }
+
+        if !gameFilters.isEmpty {
+            results = results.filter { clip in
+                guard let game = clip.gameLabel else { return false }
+                return gameFilters.contains(game)
+            }
+        }
+
+        return results.sorted { $0.dateCreated > $1.dateCreated }
+    }
 
     // MARK: - Thumbnail Generation
 

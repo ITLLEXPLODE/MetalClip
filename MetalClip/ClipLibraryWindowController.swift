@@ -156,7 +156,7 @@ class ClipCardItem: NSCollectionViewItem {
 
 // MARK: - ClipLibraryWindowController
 
-class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDataSource, NSTableViewDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, NSWindowDelegate {
+class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDataSource, NSTableViewDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, NSWindowDelegate, NSSearchFieldDelegate {
 
     // MARK: - Nav
 
@@ -211,6 +211,15 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     private var fullscreenOverlayConstraints: [NSLayoutConstraint] = []
     private var buttonStack: NSStackView!
 
+    private var searchView: NSView!
+    private var searchField: NSSearchField!
+    private var dateChipRow: NSStackView!
+    private var lengthChipRow: NSStackView!
+    private var gameChipRow: NSStackView!
+    private var searchCollectionView: NSCollectionView!
+    private var searchScrollView: NSScrollView!
+    private var searchEmptyLabel: NSTextField!
+
     let library: ClipLibrary
 
     private var currentNav: NavItem = .allClips
@@ -220,6 +229,12 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     private var activeClip: ClipMetadata?
     private var isShowingPlayer = false
     private var pendingSelectFilename: String?
+
+    private var searchText: String = ""
+    private var selectedDateFilters: Set<ClipLibrary.DateFilter> = []
+    private var selectedLengthFilters: Set<ClipLibrary.LengthFilter> = []
+    private var selectedGameFilters: Set<String> = []
+    private var searchResults: [ClipMetadata] = []
 
     // MARK: - Init
 
@@ -264,12 +279,15 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     }
 
     private func updateThumbnail(for clipID: UUID) {
-        guard let idx = flatList.firstIndex(where: { $0.id == clipID }) else { return }
-        if let libClip = library.clips.first(where: { $0.id == clipID }) {
-            flatList[idx].thumbnailPath = libClip.thumbnailPath
+        let libClip = library.clips.first(where: { $0.id == clipID })
+        if let idx = flatList.firstIndex(where: { $0.id == clipID }) {
+            flatList[idx].thumbnailPath = libClip?.thumbnailPath
+            clipCollectionView?.reloadItems(at: [IndexPath(item: idx, section: 0)])
         }
-        let indexPath = IndexPath(item: idx, section: 0)
-        clipCollectionView?.reloadItems(at: [indexPath])
+        if let idx = searchResults.firstIndex(where: { $0.id == clipID }) {
+            searchResults[idx].thumbnailPath = libClip?.thumbnailPath
+            searchCollectionView?.reloadItems(at: [IndexPath(item: idx, section: 0)])
+        }
     }
 
     // MARK: - Window
@@ -318,6 +336,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         splitView.setPosition(160, ofDividerAt: 0)
 
         buildClipGridView()
+        buildSearchView()
         buildPlayerView()
         buildPlaceholders()
 
@@ -449,6 +468,140 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         flowLayout.itemSize = NSSize(width: itemWidth, height: itemHeight)
     }
 
+    // MARK: - Search View
+
+    private func buildSearchView() {
+        searchView = NSView()
+        searchView.translatesAutoresizingMaskIntoConstraints = false
+
+        searchField = NSSearchField()
+        searchField.translatesAutoresizingMaskIntoConstraints = false
+        searchField.placeholderString = "Search clips..."
+        searchField.delegate = self
+        searchView.addSubview(searchField)
+
+        dateChipRow = NSStackView()
+        dateChipRow.translatesAutoresizingMaskIntoConstraints = false
+        dateChipRow.orientation = .horizontal
+        dateChipRow.spacing = 6
+        for filter in ClipLibrary.DateFilter.allCases {
+            dateChipRow.addArrangedSubview(makeChip(title: filter.title, action: #selector(dateChipToggled(_:)), tag: filter.rawValue))
+        }
+        searchView.addSubview(dateChipRow)
+
+        lengthChipRow = NSStackView()
+        lengthChipRow.translatesAutoresizingMaskIntoConstraints = false
+        lengthChipRow.orientation = .horizontal
+        lengthChipRow.spacing = 6
+        for filter in ClipLibrary.LengthFilter.allCases {
+            lengthChipRow.addArrangedSubview(makeChip(title: filter.title, action: #selector(lengthChipToggled(_:)), tag: filter.rawValue))
+        }
+        searchView.addSubview(lengthChipRow)
+
+        // FUTURE: game chips populate when gameLabel is set
+        gameChipRow = NSStackView()
+        gameChipRow.translatesAutoresizingMaskIntoConstraints = false
+        gameChipRow.orientation = .horizontal
+        gameChipRow.spacing = 6
+        gameChipRow.isHidden = true
+        searchView.addSubview(gameChipRow)
+
+        searchEmptyLabel = NSTextField(labelWithString: "필터를 선택하세요")
+        searchEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        searchEmptyLabel.font = .systemFont(ofSize: 16, weight: .medium)
+        searchEmptyLabel.textColor = .tertiaryLabelColor
+        searchEmptyLabel.alignment = .center
+        searchView.addSubview(searchEmptyLabel)
+
+        let flowLayout = NSCollectionViewFlowLayout()
+        flowLayout.minimumInteritemSpacing = 12
+        flowLayout.minimumLineSpacing = 16
+        flowLayout.sectionInset = NSEdgeInsets(top: 8, left: 12, bottom: 12, right: 12)
+
+        searchCollectionView = NSCollectionView()
+        searchCollectionView.collectionViewLayout = flowLayout
+        searchCollectionView.isSelectable = true
+        searchCollectionView.allowsMultipleSelection = false
+        searchCollectionView.dataSource = self
+        searchCollectionView.delegate = self
+        searchCollectionView.register(ClipCardItem.self, forItemWithIdentifier: ClipCardItem.identifier)
+        searchCollectionView.backgroundColors = [.clear]
+
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "Rename", action: #selector(contextRename), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Delete", action: #selector(contextDelete), keyEquivalent: ""))
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Show in Finder", action: #selector(contextShowInFinder), keyEquivalent: ""))
+        for item in menu.items { item.target = self }
+        searchCollectionView.menu = menu
+
+        searchScrollView = NSScrollView()
+        searchScrollView.translatesAutoresizingMaskIntoConstraints = false
+        searchScrollView.hasVerticalScroller = true
+        searchScrollView.autohidesScrollers = true
+        searchScrollView.documentView = searchCollectionView
+        searchScrollView.isHidden = true
+        searchView.addSubview(searchScrollView)
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(searchGridFrameChanged),
+            name: NSView.frameDidChangeNotification,
+            object: searchScrollView
+        )
+        searchScrollView.postsFrameChangedNotifications = true
+
+        NSLayoutConstraint.activate([
+            searchField.leadingAnchor.constraint(equalTo: searchView.leadingAnchor, constant: 12),
+            searchField.trailingAnchor.constraint(equalTo: searchView.trailingAnchor, constant: -12),
+            searchField.topAnchor.constraint(equalTo: searchView.topAnchor, constant: 12),
+
+            dateChipRow.leadingAnchor.constraint(equalTo: searchView.leadingAnchor, constant: 12),
+            dateChipRow.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 10),
+
+            lengthChipRow.leadingAnchor.constraint(equalTo: searchView.leadingAnchor, constant: 12),
+            lengthChipRow.topAnchor.constraint(equalTo: dateChipRow.bottomAnchor, constant: 6),
+
+            gameChipRow.leadingAnchor.constraint(equalTo: searchView.leadingAnchor, constant: 12),
+            gameChipRow.topAnchor.constraint(equalTo: lengthChipRow.bottomAnchor, constant: 6),
+
+            searchScrollView.leadingAnchor.constraint(equalTo: searchView.leadingAnchor),
+            searchScrollView.trailingAnchor.constraint(equalTo: searchView.trailingAnchor),
+            searchScrollView.topAnchor.constraint(equalTo: gameChipRow.bottomAnchor, constant: 10),
+            searchScrollView.bottomAnchor.constraint(equalTo: searchView.bottomAnchor),
+
+            searchEmptyLabel.centerXAnchor.constraint(equalTo: searchView.centerXAnchor),
+            searchEmptyLabel.centerYAnchor.constraint(equalTo: searchView.centerYAnchor, constant: 30),
+        ])
+    }
+
+    private func makeChip(title: String, action: Selector, tag: Int) -> NSButton {
+        let btn = NSButton(title: title, target: self, action: action)
+        btn.setButtonType(.pushOnPushOff)
+        btn.bezelStyle = .recessed
+        btn.tag = tag
+        btn.font = .systemFont(ofSize: 12)
+        return btn
+    }
+
+    @objc private func searchGridFrameChanged() {
+        updateSearchFlowLayoutItemSize()
+    }
+
+    private func updateSearchFlowLayoutItemSize() {
+        guard let flowLayout = searchCollectionView?.collectionViewLayout as? NSCollectionViewFlowLayout else { return }
+        let availableWidth = searchScrollView.frame.width - flowLayout.sectionInset.left - flowLayout.sectionInset.right
+        guard availableWidth > 0 else { return }
+
+        let minWidth: CGFloat = 240
+        let spacing = flowLayout.minimumInteritemSpacing
+        let columns = min(3, max(1, floor((availableWidth + spacing) / (minWidth + spacing))))
+        let itemWidth = floor((availableWidth - (columns - 1) * spacing) / columns)
+        let itemHeight = ClipCardItem.cardHeight(for: itemWidth)
+
+        flowLayout.itemSize = NSSize(width: itemWidth, height: itemHeight)
+    }
+
     // MARK: - Player View
 
     private func buildPlayerView() {
@@ -536,11 +689,10 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     // MARK: - Placeholder Views
 
     private func buildPlaceholders() {
-        for item in [NavItem.search, NavItem.playlists, NavItem.settings] {
+        for item in [NavItem.playlists, NavItem.settings] {
             let view = NSView()
             view.translatesAutoresizingMaskIntoConstraints = false
 
-            // FUTURE: replace placeholder with real Search view (4B-5)
             // FUTURE: replace placeholder with real Playlists view (4B-7)
             // FUTURE: replace placeholder with real Settings view (4B-8)
             let label = NSTextField(labelWithString: "\(item.title) coming soon")
@@ -572,7 +724,9 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         switch item {
         case .allClips:
             target = clipGridView
-        case .search, .playlists, .settings:
+        case .search:
+            target = searchView
+        case .playlists, .settings:
             target = placeholderViews[item]!
         }
 
@@ -587,6 +741,14 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         if item == .allClips {
             DispatchQueue.main.async { [weak self] in
                 self?.updateFlowLayoutItemSize()
+            }
+        }
+
+        if item == .search {
+            refreshGameChips()
+            DispatchQueue.main.async { [weak self] in
+                self?.updateSearchFlowLayoutItemSize()
+                self?.window?.makeFirstResponder(self?.searchField)
             }
         }
     }
@@ -621,13 +783,15 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     }
 
     func collectionView(_ collectionView: NSCollectionView, numberOfItemsInSection section: Int) -> Int {
-        flatList.count
+        if collectionView == searchCollectionView { return searchResults.count }
+        return flatList.count
     }
 
     func collectionView(_ collectionView: NSCollectionView, itemForRepresentedObjectAt indexPath: IndexPath) -> NSCollectionViewItem {
         let item = collectionView.makeItem(withIdentifier: ClipCardItem.identifier, for: indexPath) as! ClipCardItem
-        if indexPath.item < flatList.count {
-            item.configure(with: flatList[indexPath.item])
+        let list = collectionView == searchCollectionView ? searchResults : flatList
+        if indexPath.item < list.count {
+            item.configure(with: list[indexPath.item])
         }
         return item
     }
@@ -635,8 +799,10 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     // MARK: - NSCollectionViewDelegate
 
     func collectionView(_ collectionView: NSCollectionView, didSelectItemsAt indexPaths: Set<IndexPath>) {
-        guard let indexPath = indexPaths.first, indexPath.item < flatList.count else { return }
-        openClipInPlayer(flatList[indexPath.item])
+        guard let indexPath = indexPaths.first else { return }
+        let list = collectionView == searchCollectionView ? searchResults : flatList
+        guard indexPath.item < list.count else { return }
+        openClipInPlayer(list[indexPath.item])
     }
 
     // MARK: - NSTableViewDataSource (nav only)
@@ -719,7 +885,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         showPlayerInMain()
     }
 
-    private func updatePlayerInfo() {
+        private func updatePlayerInfo() {
         guard let clip = activeClip else { return }
         playerInfoLabel.stringValue = "\(clip.filename)\n\(clip.durationFormatted) \u{00B7} \(clip.resolution) \u{00B7} \(clip.fileSizeFormatted) \u{00B7} \(clip.relativeDateFormatted)"
     }
@@ -728,7 +894,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         player?.pause()
         activeClip = nil
         isShowingPlayer = false
-        showMainView(for: .allClips)
+        showMainView(for: currentNav)
     }
 
     // MARK: - Fullscreen
@@ -791,6 +957,100 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         }
     }
 
+    // MARK: - Search Logic
+
+    @objc private func dateChipToggled(_ sender: NSButton) {
+        guard let filter = ClipLibrary.DateFilter(rawValue: sender.tag) else { return }
+
+        if filter == .all {
+            if sender.state == .on {
+                selectedDateFilters = [.all]
+                for view in dateChipRow.arrangedSubviews where view !== sender {
+                    (view as? NSButton)?.state = .off
+                }
+            } else {
+                selectedDateFilters.remove(.all)
+            }
+        } else {
+            if sender.state == .on {
+                selectedDateFilters.insert(filter)
+                selectedDateFilters.remove(.all)
+                for view in dateChipRow.arrangedSubviews {
+                    if let btn = view as? NSButton, btn.tag == ClipLibrary.DateFilter.all.rawValue {
+                        btn.state = .off
+                    }
+                }
+            } else {
+                selectedDateFilters.remove(filter)
+            }
+        }
+        updateSearchResults()
+    }
+
+    @objc private func lengthChipToggled(_ sender: NSButton) {
+        guard let filter = ClipLibrary.LengthFilter(rawValue: sender.tag) else { return }
+        if sender.state == .on {
+            selectedLengthFilters.insert(filter)
+        } else {
+            selectedLengthFilters.remove(filter)
+        }
+        updateSearchResults()
+    }
+
+    @objc private func gameChipToggled(_ sender: NSButton) {
+        let game = sender.title
+        if sender.state == .on {
+            selectedGameFilters.insert(game)
+        } else {
+            selectedGameFilters.remove(game)
+        }
+        updateSearchResults()
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        guard let field = obj.object as? NSSearchField, field == searchField else { return }
+        searchText = field.stringValue
+        updateSearchResults()
+    }
+
+    private func updateSearchResults() {
+        let hasActiveFilter = !searchText.isEmpty || !selectedDateFilters.isEmpty || !selectedLengthFilters.isEmpty || !selectedGameFilters.isEmpty
+
+        if !hasActiveFilter {
+            searchResults = []
+            searchCollectionView?.reloadData()
+            searchScrollView?.isHidden = true
+            searchEmptyLabel?.isHidden = false
+            searchEmptyLabel?.stringValue = "필터를 선택하세요"
+            return
+        }
+
+        searchResults = library.search(text: searchText, dateFilters: selectedDateFilters, lengthFilters: selectedLengthFilters, gameFilters: selectedGameFilters)
+        searchCollectionView?.reloadData()
+
+        if searchResults.isEmpty {
+            searchScrollView?.isHidden = true
+            searchEmptyLabel?.isHidden = false
+            searchEmptyLabel?.stringValue = "결과 없음"
+        } else {
+            searchScrollView?.isHidden = false
+            searchEmptyLabel?.isHidden = true
+        }
+    }
+
+    private func refreshGameChips() {
+        for view in gameChipRow.arrangedSubviews { view.removeFromSuperview() }
+        selectedGameFilters.removeAll()
+
+        // FUTURE: game chips populate when gameLabel is set
+        let games = library.distinctGameLabels
+        gameChipRow.isHidden = games.isEmpty
+
+        for game in games {
+            gameChipRow.addArrangedSubview(makeChip(title: game, action: #selector(gameChipToggled(_:)), tag: 0))
+        }
+    }
+
     // MARK: - Actions
 
     @objc private func sortChanged() {
@@ -817,13 +1077,18 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     // MARK: - Context Menu
 
     private func clipAtClickPoint() -> ClipMetadata? {
-        let point = clipCollectionView.convert(
-            clipCollectionView.window!.mouseLocationOutsideOfEventStream,
-            from: nil
-        )
-        guard let indexPath = clipCollectionView.indexPathForItem(at: point),
-              indexPath.item < flatList.count else { return nil }
-        return flatList[indexPath.item]
+        let cv: NSCollectionView
+        let list: [ClipMetadata]
+        if currentNav == .search {
+            cv = searchCollectionView
+            list = searchResults
+        } else {
+            cv = clipCollectionView
+            list = flatList
+        }
+        let point = cv.convert(cv.window!.mouseLocationOutsideOfEventStream, from: nil)
+        guard let indexPath = cv.indexPathForItem(at: point), indexPath.item < list.count else { return nil }
+        return list[indexPath.item]
     }
 
     @objc private func contextRename() {
