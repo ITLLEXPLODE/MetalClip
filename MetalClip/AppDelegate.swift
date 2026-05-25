@@ -512,7 +512,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func openLibraryAction() {
-        print("📚 openLibraryAction called")
         clipLibraryWindow.showWindow()
     }
 
