@@ -1,7 +1,153 @@
 import Cocoa
 import AVKit
 
-class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDataSource, NSTableViewDelegate, NSWindowDelegate {
+// MARK: - ClipCardItem
+
+class ClipCardItem: NSCollectionViewItem {
+
+    static let identifier = NSUserInterfaceItemIdentifier("ClipCardItem")
+    private static let minCardWidth: CGFloat = 240
+
+    private var thumbView: NSView!
+    private var durationBadge: NSTextField!
+    private var nameLabel: NSTextField!
+    private var gameLabel: NSTextField!
+    private var detailLabel: NSTextField!
+    private var dateLabel: NSTextField!
+    private var trackingArea: NSTrackingArea?
+
+    override func loadView() {
+        let card = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 220))
+        card.wantsLayer = true
+        card.layer?.cornerRadius = 8
+        self.view = card
+
+        thumbView = NSView()
+        thumbView.translatesAutoresizingMaskIntoConstraints = false
+        thumbView.wantsLayer = true
+        thumbView.layer?.backgroundColor = NSColor.quaternaryLabelColor.cgColor
+        thumbView.layer?.cornerRadius = 6
+        // FUTURE: load thumbnailPath image here
+        card.addSubview(thumbView)
+
+        durationBadge = NSTextField(labelWithString: "")
+        durationBadge.translatesAutoresizingMaskIntoConstraints = false
+        durationBadge.font = .monospacedDigitSystemFont(ofSize: 10, weight: .medium)
+        durationBadge.textColor = .white
+        durationBadge.wantsLayer = true
+        durationBadge.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.7).cgColor
+        durationBadge.layer?.cornerRadius = 3
+        durationBadge.alignment = .center
+        thumbView.addSubview(durationBadge)
+
+        nameLabel = NSTextField(labelWithString: "")
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        nameLabel.lineBreakMode = .byTruncatingTail
+        nameLabel.maximumNumberOfLines = 1
+        card.addSubview(nameLabel)
+
+        gameLabel = NSTextField(labelWithString: "")
+        gameLabel.translatesAutoresizingMaskIntoConstraints = false
+        gameLabel.font = .systemFont(ofSize: 11)
+        gameLabel.textColor = .secondaryLabelColor
+        gameLabel.lineBreakMode = .byTruncatingTail
+        gameLabel.maximumNumberOfLines = 1
+        gameLabel.isHidden = true
+        card.addSubview(gameLabel)
+
+        detailLabel = NSTextField(labelWithString: "")
+        detailLabel.translatesAutoresizingMaskIntoConstraints = false
+        detailLabel.font = .systemFont(ofSize: 10)
+        detailLabel.textColor = .secondaryLabelColor
+        detailLabel.lineBreakMode = .byTruncatingTail
+        card.addSubview(detailLabel)
+
+        dateLabel = NSTextField(labelWithString: "")
+        dateLabel.translatesAutoresizingMaskIntoConstraints = false
+        dateLabel.font = .systemFont(ofSize: 10)
+        dateLabel.textColor = .tertiaryLabelColor
+        card.addSubview(dateLabel)
+
+        NSLayoutConstraint.activate([
+            thumbView.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 4),
+            thumbView.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -4),
+            thumbView.topAnchor.constraint(equalTo: card.topAnchor, constant: 4),
+            thumbView.heightAnchor.constraint(equalTo: thumbView.widthAnchor, multiplier: 9.0 / 16.0),
+
+            durationBadge.trailingAnchor.constraint(equalTo: thumbView.trailingAnchor, constant: -6),
+            durationBadge.bottomAnchor.constraint(equalTo: thumbView.bottomAnchor, constant: -6),
+            durationBadge.widthAnchor.constraint(greaterThanOrEqualToConstant: 36),
+
+            nameLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 8),
+            nameLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
+            nameLabel.topAnchor.constraint(equalTo: thumbView.bottomAnchor, constant: 6),
+
+            gameLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            gameLabel.trailingAnchor.constraint(equalTo: nameLabel.trailingAnchor),
+            gameLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 2),
+
+            detailLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            detailLabel.trailingAnchor.constraint(equalTo: nameLabel.trailingAnchor),
+            detailLabel.topAnchor.constraint(equalTo: gameLabel.bottomAnchor, constant: 2),
+
+            dateLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            dateLabel.trailingAnchor.constraint(equalTo: nameLabel.trailingAnchor),
+            dateLabel.topAnchor.constraint(equalTo: detailLabel.bottomAnchor, constant: 2),
+        ])
+    }
+
+    func configure(with clip: ClipMetadata) {
+        durationBadge.stringValue = " \(clip.durationFormatted) "
+        nameLabel.stringValue = clip.filename
+
+        if let game = clip.gameLabel, !game.isEmpty {
+            gameLabel.stringValue = game
+            gameLabel.isHidden = false
+        } else {
+            gameLabel.isHidden = true
+        }
+
+        detailLabel.stringValue = "\(clip.resolution) \u{00B7} \(clip.fileSizeFormatted)"
+        dateLabel.stringValue = clip.relativeDateFormatted
+    }
+
+    override var isSelected: Bool {
+        didSet {
+            view.layer?.backgroundColor = isSelected
+                ? NSColor.controlAccentColor.withAlphaComponent(0.15).cgColor
+                : nil
+        }
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        if let ta = trackingArea { view.removeTrackingArea(ta) }
+        trackingArea = NSTrackingArea(rect: view.bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow], owner: self)
+        view.addTrackingArea(trackingArea!)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        if !isSelected {
+            view.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.04).cgColor
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        if !isSelected {
+            view.layer?.backgroundColor = nil
+        }
+    }
+
+    static func cardHeight(for width: CGFloat) -> CGFloat {
+        let thumbH = (width - 8) * 9.0 / 16.0
+        return thumbH + 4 + 6 + 14 + 2 + 14 + 2 + 12 + 2 + 12 + 8
+    }
+}
+
+// MARK: - ClipLibraryWindowController
+
+class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDataSource, NSTableViewDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, NSWindowDelegate {
 
     // MARK: - Nav
 
@@ -35,8 +181,9 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     private var navTableView: NSTableView!
     private var mainContainer: NSView!
 
-    private var clipListView: NSView!
-    private var clipTableView: NSTableView!
+    private var clipGridView: NSView!
+    private var clipCollectionView: NSCollectionView!
+    private var gridScrollView: NSScrollView!
     private var sortPopup: NSPopUpButton!
 
     private var playerContainerView: NSView!
@@ -84,11 +231,11 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         selectNav(.allClips)
 
         library.refresh()
-        reloadClipList()
+        reloadClipGrid()
 
         if let name = selectingFilename, let idx = flatList.firstIndex(where: { $0.filename == name }) {
-            clipTableView.selectRowIndexes(IndexSet(integer: idx), byExtendingSelection: false)
-            clipTableView.scrollRowToVisible(idx)
+            let indexPath = IndexPath(item: idx, section: 0)
+            clipCollectionView.selectItems(at: [indexPath], scrollPosition: .centeredVertically)
             openClipInPlayer(flatList[idx])
         }
 
@@ -101,7 +248,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     // MARK: - ClipLibraryDelegate
 
     func clipLibraryDidUpdate() {
-        reloadClipList()
+        reloadClipGrid()
     }
 
     // MARK: - Window
@@ -149,7 +296,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
         splitView.setPosition(160, ofDividerAt: 0)
 
-        buildClipListView()
+        buildClipGridView()
         buildPlayerView()
         buildPlaceholders()
 
@@ -186,7 +333,6 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         navTableView.addTableColumn(col)
 
         scrollView.documentView = navTableView
-
         container.addSubview(scrollView)
 
         NSLayoutConstraint.activate([
@@ -201,11 +347,11 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         return container
     }
 
-    // MARK: - Clip List View
+    // MARK: - Clip Grid View
 
-    private func buildClipListView() {
-        clipListView = NSView()
-        clipListView.translatesAutoresizingMaskIntoConstraints = false
+    private func buildClipGridView() {
+        clipGridView = NSView()
+        clipGridView.translatesAutoresizingMaskIntoConstraints = false
 
         sortPopup = NSPopUpButton()
         sortPopup.translatesAutoresizingMaskIntoConstraints = false
@@ -214,26 +360,21 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         }
         sortPopup.target = self
         sortPopup.action = #selector(sortChanged)
-        clipListView.addSubview(sortPopup)
+        clipGridView.addSubview(sortPopup)
 
-        let scrollView = NSScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.hasVerticalScroller = true
-        scrollView.autohidesScrollers = true
+        let flowLayout = NSCollectionViewFlowLayout()
+        flowLayout.minimumInteritemSpacing = 12
+        flowLayout.minimumLineSpacing = 16
+        flowLayout.sectionInset = NSEdgeInsets(top: 8, left: 12, bottom: 12, right: 12)
 
-        clipTableView = NSTableView()
-        clipTableView.style = .plain
-        clipTableView.headerView = nil
-        clipTableView.rowHeight = 80
-        clipTableView.intercellSpacing = NSSize(width: 0, height: 1)
-        clipTableView.dataSource = self
-        clipTableView.delegate = self
-        clipTableView.target = self
-        clipTableView.action = #selector(clipClicked)
-
-        let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("clip"))
-        col.width = 500
-        clipTableView.addTableColumn(col)
+        clipCollectionView = NSCollectionView()
+        clipCollectionView.collectionViewLayout = flowLayout
+        clipCollectionView.isSelectable = true
+        clipCollectionView.allowsMultipleSelection = false
+        clipCollectionView.dataSource = self
+        clipCollectionView.delegate = self
+        clipCollectionView.register(ClipCardItem.self, forItemWithIdentifier: ClipCardItem.identifier)
+        clipCollectionView.backgroundColors = [.clear]
 
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Rename", action: #selector(contextRename), keyEquivalent: ""))
@@ -241,20 +382,50 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Show in Finder", action: #selector(contextShowInFinder), keyEquivalent: ""))
         for item in menu.items { item.target = self }
-        clipTableView.menu = menu
+        clipCollectionView.menu = menu
 
-        scrollView.documentView = clipTableView
-        clipListView.addSubview(scrollView)
+        gridScrollView = NSScrollView()
+        gridScrollView.translatesAutoresizingMaskIntoConstraints = false
+        gridScrollView.hasVerticalScroller = true
+        gridScrollView.autohidesScrollers = true
+        gridScrollView.documentView = clipCollectionView
+        clipGridView.addSubview(gridScrollView)
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(gridFrameChanged),
+            name: NSView.frameDidChangeNotification,
+            object: gridScrollView
+        )
+        gridScrollView.postsFrameChangedNotifications = true
 
         NSLayoutConstraint.activate([
-            sortPopup.leadingAnchor.constraint(equalTo: clipListView.leadingAnchor, constant: 12),
-            sortPopup.topAnchor.constraint(equalTo: clipListView.topAnchor, constant: 8),
+            sortPopup.leadingAnchor.constraint(equalTo: clipGridView.leadingAnchor, constant: 12),
+            sortPopup.topAnchor.constraint(equalTo: clipGridView.topAnchor, constant: 8),
 
-            scrollView.leadingAnchor.constraint(equalTo: clipListView.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: clipListView.trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: sortPopup.bottomAnchor, constant: 6),
-            scrollView.bottomAnchor.constraint(equalTo: clipListView.bottomAnchor),
+            gridScrollView.leadingAnchor.constraint(equalTo: clipGridView.leadingAnchor),
+            gridScrollView.trailingAnchor.constraint(equalTo: clipGridView.trailingAnchor),
+            gridScrollView.topAnchor.constraint(equalTo: sortPopup.bottomAnchor, constant: 6),
+            gridScrollView.bottomAnchor.constraint(equalTo: clipGridView.bottomAnchor),
         ])
+    }
+
+    @objc private func gridFrameChanged() {
+        updateFlowLayoutItemSize()
+    }
+
+    private func updateFlowLayoutItemSize() {
+        guard let flowLayout = clipCollectionView?.collectionViewLayout as? NSCollectionViewFlowLayout else { return }
+        let availableWidth = gridScrollView.frame.width - flowLayout.sectionInset.left - flowLayout.sectionInset.right
+        guard availableWidth > 0 else { return }
+
+        let minWidth: CGFloat = 240
+        let spacing = flowLayout.minimumInteritemSpacing
+        let columns = min(3, max(1, floor((availableWidth + spacing) / (minWidth + spacing))))
+        let itemWidth = floor((availableWidth - (columns - 1) * spacing) / columns)
+        let itemHeight = ClipCardItem.cardHeight(for: itemWidth)
+
+        flowLayout.itemSize = NSSize(width: itemWidth, height: itemHeight)
     }
 
     // MARK: - Player View
@@ -379,7 +550,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
 
         switch item {
         case .allClips:
-            target = clipListView
+            target = clipGridView
         case .search, .playlists, .settings:
             target = placeholderViews[item]!
         }
@@ -391,6 +562,12 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
             target.topAnchor.constraint(equalTo: mainContainer.topAnchor),
             target.bottomAnchor.constraint(equalTo: mainContainer.bottomAnchor),
         ])
+
+        if item == .allClips {
+            DispatchQueue.main.async { [weak self] in
+                self?.updateFlowLayoutItemSize()
+            }
+        }
     }
 
     private func showPlayerInMain() {
@@ -410,33 +587,51 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
 
     // MARK: - Data
 
-    private func reloadClipList() {
+    private func reloadClipGrid() {
         displayGroups = library.grouped(by: currentSort)
         flatList = displayGroups.flatMap(\.clips)
-        clipTableView?.reloadData()
+        clipCollectionView?.reloadData()
     }
 
-    // MARK: - NSTableViewDataSource
+    // MARK: - NSCollectionViewDataSource
+
+    func numberOfSections(in collectionView: NSCollectionView) -> Int {
+        1
+    }
+
+    func collectionView(_ collectionView: NSCollectionView, numberOfItemsInSection section: Int) -> Int {
+        flatList.count
+    }
+
+    func collectionView(_ collectionView: NSCollectionView, itemForRepresentedObjectAt indexPath: IndexPath) -> NSCollectionViewItem {
+        let item = collectionView.makeItem(withIdentifier: ClipCardItem.identifier, for: indexPath) as! ClipCardItem
+        if indexPath.item < flatList.count {
+            item.configure(with: flatList[indexPath.item])
+        }
+        return item
+    }
+
+    // MARK: - NSCollectionViewDelegate
+
+    func collectionView(_ collectionView: NSCollectionView, didSelectItemsAt indexPaths: Set<IndexPath>) {
+        guard let indexPath = indexPaths.first, indexPath.item < flatList.count else { return }
+        openClipInPlayer(flatList[indexPath.item])
+    }
+
+    // MARK: - NSTableViewDataSource (nav only)
 
     func numberOfRows(in tableView: NSTableView) -> Int {
-        if tableView === navTableView {
-            return NavItem.allCases.count
-        }
-        return flatList.count
+        NavItem.allCases.count
     }
 
-    // MARK: - NSTableViewDelegate
+    // MARK: - NSTableViewDelegate (nav only)
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        if tableView === navTableView {
-            return navCell(for: row)
-        }
-        return clipCell(for: row)
+        navCell(for: row)
     }
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        if tableView === navTableView { return 28 }
-        return 80
+        28
     }
 
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
@@ -476,54 +671,6 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         return cell
     }
 
-    // MARK: - Clip Cells
-
-    private func clipCell(for row: Int) -> NSView? {
-        guard row < flatList.count else { return nil }
-        let clip = flatList[row]
-
-        let cell = NSView()
-
-        let thumb = NSView()
-        thumb.translatesAutoresizingMaskIntoConstraints = false
-        thumb.wantsLayer = true
-        thumb.layer?.backgroundColor = NSColor.quaternaryLabelColor.cgColor
-        thumb.layer?.cornerRadius = 4
-        // FUTURE: replace placeholder with actual thumbnail from clip.thumbnailPath
-        cell.addSubview(thumb)
-
-        let nameLabel = NSTextField(labelWithString: clip.filename)
-        nameLabel.translatesAutoresizingMaskIntoConstraints = false
-        nameLabel.font = .systemFont(ofSize: 12, weight: .medium)
-        nameLabel.lineBreakMode = .byTruncatingTail
-        cell.addSubview(nameLabel)
-
-        let detail = "\(clip.durationFormatted) \u{00B7} \(clip.resolution) \u{00B7} \(clip.fileSizeFormatted)"
-        let detailLabel = NSTextField(labelWithString: detail)
-        detailLabel.translatesAutoresizingMaskIntoConstraints = false
-        detailLabel.font = .systemFont(ofSize: 10)
-        detailLabel.textColor = .secondaryLabelColor
-        detailLabel.lineBreakMode = .byTruncatingTail
-        cell.addSubview(detailLabel)
-
-        NSLayoutConstraint.activate([
-            thumb.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
-            thumb.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            thumb.widthAnchor.constraint(equalToConstant: 96),
-            thumb.heightAnchor.constraint(equalToConstant: 54),
-
-            nameLabel.leadingAnchor.constraint(equalTo: thumb.trailingAnchor, constant: 8),
-            nameLabel.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
-            nameLabel.topAnchor.constraint(equalTo: thumb.topAnchor, constant: 4),
-
-            detailLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-            detailLabel.trailingAnchor.constraint(equalTo: nameLabel.trailingAnchor),
-            detailLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 2),
-        ])
-
-        return cell
-    }
-
     // MARK: - Nav Selection
 
     @objc private func navClicked() {
@@ -539,12 +686,6 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     }
 
     // MARK: - Clip Selection & Player
-
-    @objc private func clipClicked() {
-        let row = clipTableView.selectedRow
-        guard row >= 0, row < flatList.count else { return }
-        openClipInPlayer(flatList[row])
-    }
 
     private func openClipInPlayer(_ clip: ClipMetadata) {
         activeClip = clip
@@ -624,7 +765,6 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
                 backToList()
             }
         }
-        // 'F' key = keyCode 3
         if event.keyCode == 3 && isShowingPlayer && event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty {
             toggleFullscreen()
         }
@@ -634,7 +774,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
 
     @objc private func sortChanged() {
         currentSort = ClipLibrary.SortOrder(rawValue: sortPopup.indexOfSelectedItem) ?? .newestFirst
-        reloadClipList()
+        reloadClipGrid()
     }
 
     @objc private func renameAction() {
@@ -655,22 +795,29 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
 
     // MARK: - Context Menu
 
+    private func clipAtClickPoint() -> ClipMetadata? {
+        let point = clipCollectionView.convert(
+            clipCollectionView.window!.mouseLocationOutsideOfEventStream,
+            from: nil
+        )
+        guard let indexPath = clipCollectionView.indexPathForItem(at: point),
+              indexPath.item < flatList.count else { return nil }
+        return flatList[indexPath.item]
+    }
+
     @objc private func contextRename() {
-        let row = clipTableView.clickedRow
-        guard row >= 0, row < flatList.count else { return }
-        performRename(flatList[row])
+        guard let clip = clipAtClickPoint() else { return }
+        performRename(clip)
     }
 
     @objc private func contextDelete() {
-        let row = clipTableView.clickedRow
-        guard row >= 0, row < flatList.count else { return }
-        performDelete(flatList[row])
+        guard let clip = clipAtClickPoint() else { return }
+        performDelete(clip)
     }
 
     @objc private func contextShowInFinder() {
-        let row = clipTableView.clickedRow
-        guard row >= 0, row < flatList.count else { return }
-        let url = library.directory.appendingPathComponent(flatList[row].filename)
+        guard let clip = clipAtClickPoint() else { return }
+        let url = library.directory.appendingPathComponent(clip.filename)
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
