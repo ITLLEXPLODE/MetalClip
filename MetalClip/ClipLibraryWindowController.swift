@@ -199,6 +199,111 @@ class ClipCardItem: NSCollectionViewItem {
     }
 }
 
+// MARK: - PlaylistCardItem
+
+class PlaylistCardItem: NSCollectionViewItem {
+
+    static let identifier = NSUserInterfaceItemIdentifier("PlaylistCardItem")
+
+    private var coverView: NSView!
+    private var countBadge: NSTextField!
+    private var nameLabel: NSTextField!
+    private var trackingArea: NSTrackingArea?
+
+    override func loadView() {
+        let card = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 180))
+        card.wantsLayer = true
+        card.layer?.cornerRadius = 8
+        self.view = card
+
+        coverView = NSView()
+        coverView.translatesAutoresizingMaskIntoConstraints = false
+        coverView.wantsLayer = true
+        coverView.layer?.backgroundColor = NSColor.quaternaryLabelColor.cgColor
+        coverView.layer?.cornerRadius = 6
+        coverView.layer?.contentsGravity = .resizeAspectFill
+        coverView.layer?.masksToBounds = true
+        card.addSubview(coverView)
+
+        countBadge = NSTextField(labelWithString: "")
+        countBadge.translatesAutoresizingMaskIntoConstraints = false
+        countBadge.font = .monospacedDigitSystemFont(ofSize: 10, weight: .medium)
+        countBadge.textColor = .white
+        countBadge.wantsLayer = true
+        countBadge.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.7).cgColor
+        countBadge.layer?.cornerRadius = 3
+        countBadge.alignment = .center
+        coverView.addSubview(countBadge)
+
+        nameLabel = NSTextField(labelWithString: "")
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        nameLabel.lineBreakMode = .byTruncatingTail
+        nameLabel.maximumNumberOfLines = 1
+        card.addSubview(nameLabel)
+
+        NSLayoutConstraint.activate([
+            coverView.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 4),
+            coverView.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -4),
+            coverView.topAnchor.constraint(equalTo: card.topAnchor, constant: 4),
+            coverView.heightAnchor.constraint(equalTo: coverView.widthAnchor, multiplier: 9.0 / 16.0),
+
+            countBadge.trailingAnchor.constraint(equalTo: coverView.trailingAnchor, constant: -6),
+            countBadge.bottomAnchor.constraint(equalTo: coverView.bottomAnchor, constant: -6),
+            countBadge.widthAnchor.constraint(greaterThanOrEqualToConstant: 36),
+
+            nameLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 8),
+            nameLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
+            nameLabel.topAnchor.constraint(equalTo: coverView.bottomAnchor, constant: 6),
+        ])
+    }
+
+    func configure(name: String, clipCount: Int, coverThumbnailPath: String?) {
+        nameLabel.stringValue = name
+        countBadge.stringValue = " \(clipCount) clip\(clipCount == 1 ? "" : "s") "
+
+        if let path = coverThumbnailPath,
+           let image = NSImage(contentsOfFile: path),
+           let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            coverView.layer?.contents = cgImage
+        } else {
+            coverView.layer?.contents = nil
+        }
+    }
+
+    override var isSelected: Bool {
+        didSet {
+            view.layer?.backgroundColor = isSelected
+                ? NSColor.controlAccentColor.withAlphaComponent(0.15).cgColor
+                : nil
+        }
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        if let ta = trackingArea { view.removeTrackingArea(ta) }
+        trackingArea = NSTrackingArea(rect: view.bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow], owner: self)
+        view.addTrackingArea(trackingArea!)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        if !isSelected {
+            view.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.04).cgColor
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        if !isSelected {
+            view.layer?.backgroundColor = nil
+        }
+    }
+
+    static func cardHeight(for width: CGFloat) -> CGFloat {
+        let coverH = (width - 8) * 9.0 / 16.0
+        return coverH + 4 + 6 + 14 + 8
+    }
+}
+
 // MARK: - ClipLibraryWindowController
 
 class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDataSource, NSTableViewDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, NSWindowDelegate, NSSearchFieldDelegate, NSMenuDelegate {
@@ -266,6 +371,15 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     private var searchScrollView: NSScrollView!
     private var searchEmptyLabel: NSTextField!
 
+    private var playlistsListView: NSView!
+    private var playlistCollectionView: NSCollectionView!
+    private var playlistScrollView: NSScrollView!
+    private var playlistDetailView: NSView!
+    private var playlistDetailCollectionView: NSCollectionView!
+    private var playlistDetailScrollView: NSScrollView!
+    private var playlistDetailBackButton: NSButton!
+    private var playlistDetailTitle: NSTextField!
+
     let library: ClipLibrary
 
     private var currentNav: NavItem = .allClips
@@ -282,6 +396,12 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     private var selectedGameFilters: Set<String> = []
     private var searchResults: [ClipMetadata] = []
     private var filterFavoritesOnly = false
+
+    private var activePlaylist: ClipLibrary.Playlist?
+    private var playlistDetailClips: [ClipMetadata] = []
+    private var isShowingPlaylistDetail = false
+    private var contextMenuClip: ClipMetadata?
+    private var contextMenuPlaylist: ClipLibrary.Playlist?
 
     // MARK: - Init
 
@@ -320,6 +440,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
 
     func clipLibraryDidUpdate() {
         reloadClipGrid()
+        if isShowingPlaylistDetail { reloadPlaylistDetail() }
         library.generateMissingThumbnails { [weak self] clipID in
             self?.updateThumbnail(for: clipID)
         }
@@ -334,6 +455,10 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         if let idx = searchResults.firstIndex(where: { $0.id == clipID }) {
             searchResults[idx].thumbnailPath = libClip?.thumbnailPath
             searchCollectionView?.reloadItems(at: [IndexPath(item: idx, section: 0)])
+        }
+        if let idx = playlistDetailClips.firstIndex(where: { $0.id == clipID }) {
+            playlistDetailClips[idx].thumbnailPath = libClip?.thumbnailPath
+            playlistDetailCollectionView?.reloadItems(at: [IndexPath(item: idx, section: 0)])
         }
     }
 
@@ -384,6 +509,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
 
         buildClipGridView()
         buildSearchView()
+        buildPlaylistsView()
         buildPlayerView()
         buildPlaceholders()
 
@@ -466,6 +592,10 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         let menu = NSMenu()
         menu.delegate = self
         menu.addItem(NSMenuItem(title: "Add to Favorites", action: #selector(contextToggleFavorite), keyEquivalent: ""))
+        let addToPlaylistItem = NSMenuItem(title: "Add to Playlist", action: nil, keyEquivalent: "")
+        addToPlaylistItem.tag = 999
+        addToPlaylistItem.submenu = NSMenu()
+        menu.addItem(addToPlaylistItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Rename", action: #selector(contextRename), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Delete", action: #selector(contextDelete), keyEquivalent: ""))
@@ -506,12 +636,12 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
 
     private func updateFlowLayoutItemSize() {
         guard let flowLayout = clipCollectionView?.collectionViewLayout as? NSCollectionViewFlowLayout else { return }
-        let availableWidth = gridScrollView.frame.width - flowLayout.sectionInset.left - flowLayout.sectionInset.right
+        let availableWidth = gridScrollView.contentView.bounds.width - flowLayout.sectionInset.left - flowLayout.sectionInset.right
         guard availableWidth > 0 else { return }
 
         let minWidth: CGFloat = 240
         let spacing = flowLayout.minimumInteritemSpacing
-        let columns = min(3, max(1, floor((availableWidth + spacing) / (minWidth + spacing))))
+        let columns = min(3, max(1, floor(availableWidth / minWidth)))
         let itemWidth = floor((availableWidth - (columns - 1) * spacing) / columns)
         let itemHeight = ClipCardItem.cardHeight(for: itemWidth)
 
@@ -587,6 +717,10 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         let searchMenu = NSMenu()
         searchMenu.delegate = self
         searchMenu.addItem(NSMenuItem(title: "Add to Favorites", action: #selector(contextToggleFavorite), keyEquivalent: ""))
+        let searchAddToPlaylistItem = NSMenuItem(title: "Add to Playlist", action: nil, keyEquivalent: "")
+        searchAddToPlaylistItem.tag = 999
+        searchAddToPlaylistItem.submenu = NSMenu()
+        searchMenu.addItem(searchAddToPlaylistItem)
         searchMenu.addItem(NSMenuItem.separator())
         searchMenu.addItem(NSMenuItem(title: "Rename", action: #selector(contextRename), keyEquivalent: ""))
         searchMenu.addItem(NSMenuItem(title: "Delete", action: #selector(contextDelete), keyEquivalent: ""))
@@ -653,16 +787,173 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
 
     private func updateSearchFlowLayoutItemSize() {
         guard let flowLayout = searchCollectionView?.collectionViewLayout as? NSCollectionViewFlowLayout else { return }
-        let availableWidth = searchScrollView.frame.width - flowLayout.sectionInset.left - flowLayout.sectionInset.right
+        let availableWidth = searchScrollView.contentView.bounds.width - flowLayout.sectionInset.left - flowLayout.sectionInset.right
         guard availableWidth > 0 else { return }
 
         let minWidth: CGFloat = 240
         let spacing = flowLayout.minimumInteritemSpacing
-        let columns = min(3, max(1, floor((availableWidth + spacing) / (minWidth + spacing))))
+        let columns = min(3, max(1, floor(availableWidth / minWidth)))
         let itemWidth = floor((availableWidth - (columns - 1) * spacing) / columns)
         let itemHeight = ClipCardItem.cardHeight(for: itemWidth)
 
         flowLayout.itemSize = NSSize(width: itemWidth, height: itemHeight)
+    }
+
+    // MARK: - Playlists View
+
+    private func buildPlaylistsView() {
+        // List view (playlist cards)
+        playlistsListView = NSView()
+        playlistsListView.translatesAutoresizingMaskIntoConstraints = false
+
+        let newBtn = NSButton(title: "+ New Playlist", target: self, action: #selector(createNewPlaylist))
+        newBtn.translatesAutoresizingMaskIntoConstraints = false
+        newBtn.bezelStyle = .rounded
+        playlistsListView.addSubview(newBtn)
+
+        let flowLayout = NSCollectionViewFlowLayout()
+        flowLayout.minimumInteritemSpacing = 12
+        flowLayout.minimumLineSpacing = 16
+        flowLayout.sectionInset = NSEdgeInsets(top: 8, left: 12, bottom: 12, right: 12)
+
+        playlistCollectionView = NSCollectionView()
+        playlistCollectionView.collectionViewLayout = flowLayout
+        playlistCollectionView.isSelectable = true
+        playlistCollectionView.allowsMultipleSelection = false
+        playlistCollectionView.dataSource = self
+        playlistCollectionView.delegate = self
+        playlistCollectionView.register(PlaylistCardItem.self, forItemWithIdentifier: PlaylistCardItem.identifier)
+        playlistCollectionView.backgroundColors = [.clear]
+
+        let plMenu = NSMenu()
+        plMenu.delegate = self
+        plMenu.addItem(NSMenuItem(title: "Rename", action: #selector(contextRenamePlaylist), keyEquivalent: ""))
+        plMenu.addItem(NSMenuItem(title: "Delete", action: #selector(contextDeletePlaylist), keyEquivalent: ""))
+        for item in plMenu.items { item.target = self }
+        playlistCollectionView.menu = plMenu
+
+        playlistScrollView = NSScrollView()
+        playlistScrollView.translatesAutoresizingMaskIntoConstraints = false
+        playlistScrollView.hasVerticalScroller = true
+        playlistScrollView.autohidesScrollers = true
+        playlistScrollView.documentView = playlistCollectionView
+        playlistsListView.addSubview(playlistScrollView)
+
+        NotificationCenter.default.addObserver(self, selector: #selector(playlistGridFrameChanged), name: NSView.frameDidChangeNotification, object: playlistScrollView)
+        playlistScrollView.postsFrameChangedNotifications = true
+
+        NSLayoutConstraint.activate([
+            newBtn.leadingAnchor.constraint(equalTo: playlistsListView.leadingAnchor, constant: 12),
+            newBtn.topAnchor.constraint(equalTo: playlistsListView.topAnchor, constant: 8),
+
+            playlistScrollView.leadingAnchor.constraint(equalTo: playlistsListView.leadingAnchor),
+            playlistScrollView.trailingAnchor.constraint(equalTo: playlistsListView.trailingAnchor),
+            playlistScrollView.topAnchor.constraint(equalTo: newBtn.bottomAnchor, constant: 6),
+            playlistScrollView.bottomAnchor.constraint(equalTo: playlistsListView.bottomAnchor),
+        ])
+
+        // Detail view (clips in a playlist)
+        playlistDetailView = NSView()
+        playlistDetailView.translatesAutoresizingMaskIntoConstraints = false
+
+        playlistDetailBackButton = NSButton(title: "\u{2190} Back", target: self, action: #selector(backToPlaylistList))
+        playlistDetailBackButton.translatesAutoresizingMaskIntoConstraints = false
+        playlistDetailBackButton.bezelStyle = .rounded
+        playlistDetailBackButton.isBordered = false
+        playlistDetailBackButton.font = .systemFont(ofSize: 13)
+        playlistDetailBackButton.contentTintColor = .controlAccentColor
+        playlistDetailView.addSubview(playlistDetailBackButton)
+
+        playlistDetailTitle = NSTextField(labelWithString: "")
+        playlistDetailTitle.translatesAutoresizingMaskIntoConstraints = false
+        playlistDetailTitle.font = .systemFont(ofSize: 14, weight: .semibold)
+        playlistDetailTitle.lineBreakMode = .byTruncatingTail
+        playlistDetailView.addSubview(playlistDetailTitle)
+
+        let detailLayout = NSCollectionViewFlowLayout()
+        detailLayout.minimumInteritemSpacing = 12
+        detailLayout.minimumLineSpacing = 16
+        detailLayout.sectionInset = NSEdgeInsets(top: 8, left: 12, bottom: 12, right: 12)
+
+        playlistDetailCollectionView = NSCollectionView()
+        playlistDetailCollectionView.collectionViewLayout = detailLayout
+        playlistDetailCollectionView.isSelectable = true
+        playlistDetailCollectionView.allowsMultipleSelection = false
+        playlistDetailCollectionView.dataSource = self
+        playlistDetailCollectionView.delegate = self
+        playlistDetailCollectionView.register(ClipCardItem.self, forItemWithIdentifier: ClipCardItem.identifier)
+        playlistDetailCollectionView.backgroundColors = [.clear]
+
+        let detailMenu = NSMenu()
+        detailMenu.delegate = self
+        detailMenu.addItem(NSMenuItem(title: "Remove from Playlist", action: #selector(contextRemoveFromPlaylist), keyEquivalent: ""))
+        detailMenu.addItem(NSMenuItem.separator())
+        detailMenu.addItem(NSMenuItem(title: "Add to Favorites", action: #selector(contextToggleFavorite), keyEquivalent: ""))
+        let detailAddItem = NSMenuItem(title: "Add to Playlist", action: nil, keyEquivalent: "")
+        detailAddItem.tag = 999
+        detailAddItem.submenu = NSMenu()
+        detailMenu.addItem(detailAddItem)
+        detailMenu.addItem(NSMenuItem.separator())
+        detailMenu.addItem(NSMenuItem(title: "Rename", action: #selector(contextRename), keyEquivalent: ""))
+        detailMenu.addItem(NSMenuItem(title: "Delete", action: #selector(contextDelete), keyEquivalent: ""))
+        detailMenu.addItem(NSMenuItem.separator())
+        detailMenu.addItem(NSMenuItem(title: "Show in Finder", action: #selector(contextShowInFinder), keyEquivalent: ""))
+        for item in detailMenu.items { item.target = self }
+        playlistDetailCollectionView.menu = detailMenu
+
+        playlistDetailScrollView = NSScrollView()
+        playlistDetailScrollView.translatesAutoresizingMaskIntoConstraints = false
+        playlistDetailScrollView.hasVerticalScroller = true
+        playlistDetailScrollView.autohidesScrollers = true
+        playlistDetailScrollView.documentView = playlistDetailCollectionView
+        playlistDetailView.addSubview(playlistDetailScrollView)
+
+        NotificationCenter.default.addObserver(self, selector: #selector(playlistDetailGridFrameChanged), name: NSView.frameDidChangeNotification, object: playlistDetailScrollView)
+        playlistDetailScrollView.postsFrameChangedNotifications = true
+
+        NSLayoutConstraint.activate([
+            playlistDetailBackButton.leadingAnchor.constraint(equalTo: playlistDetailView.leadingAnchor, constant: 12),
+            playlistDetailBackButton.topAnchor.constraint(equalTo: playlistDetailView.topAnchor, constant: 8),
+
+            playlistDetailTitle.leadingAnchor.constraint(equalTo: playlistDetailBackButton.trailingAnchor, constant: 8),
+            playlistDetailTitle.centerYAnchor.constraint(equalTo: playlistDetailBackButton.centerYAnchor),
+            playlistDetailTitle.trailingAnchor.constraint(equalTo: playlistDetailView.trailingAnchor, constant: -12),
+
+            playlistDetailScrollView.leadingAnchor.constraint(equalTo: playlistDetailView.leadingAnchor),
+            playlistDetailScrollView.trailingAnchor.constraint(equalTo: playlistDetailView.trailingAnchor),
+            playlistDetailScrollView.topAnchor.constraint(equalTo: playlistDetailBackButton.bottomAnchor, constant: 6),
+            playlistDetailScrollView.bottomAnchor.constraint(equalTo: playlistDetailView.bottomAnchor),
+        ])
+    }
+
+    @objc private func playlistGridFrameChanged() {
+        updatePlaylistFlowLayoutItemSize()
+    }
+
+    private func updatePlaylistFlowLayoutItemSize() {
+        guard let flowLayout = playlistCollectionView?.collectionViewLayout as? NSCollectionViewFlowLayout else { return }
+        let availableWidth = playlistScrollView.contentView.bounds.width - flowLayout.sectionInset.left - flowLayout.sectionInset.right
+        guard availableWidth > 0 else { return }
+        let minWidth: CGFloat = 240
+        let spacing = flowLayout.minimumInteritemSpacing
+        let columns = min(3, max(1, floor(availableWidth / minWidth)))
+        let itemWidth = floor((availableWidth - (columns - 1) * spacing) / columns)
+        flowLayout.itemSize = NSSize(width: itemWidth, height: PlaylistCardItem.cardHeight(for: itemWidth))
+    }
+
+    @objc private func playlistDetailGridFrameChanged() {
+        updatePlaylistDetailFlowLayoutItemSize()
+    }
+
+    private func updatePlaylistDetailFlowLayoutItemSize() {
+        guard let flowLayout = playlistDetailCollectionView?.collectionViewLayout as? NSCollectionViewFlowLayout else { return }
+        let availableWidth = playlistDetailScrollView.contentView.bounds.width - flowLayout.sectionInset.left - flowLayout.sectionInset.right
+        guard availableWidth > 0 else { return }
+        let minWidth: CGFloat = 240
+        let spacing = flowLayout.minimumInteritemSpacing
+        let columns = min(3, max(1, floor(availableWidth / minWidth)))
+        let itemWidth = floor((availableWidth - (columns - 1) * spacing) / columns)
+        flowLayout.itemSize = NSSize(width: itemWidth, height: ClipCardItem.cardHeight(for: itemWidth))
     }
 
     // MARK: - Player View
@@ -752,11 +1043,10 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     // MARK: - Placeholder Views
 
     private func buildPlaceholders() {
-        for item in [NavItem.playlists, NavItem.settings] {
+        for item in [NavItem.settings] {
             let view = NSView()
             view.translatesAutoresizingMaskIntoConstraints = false
 
-            // FUTURE: replace placeholder with real Playlists view (4B-7)
             // FUTURE: replace placeholder with real Settings view (4B-8)
             let label = NSTextField(labelWithString: "\(item.title) coming soon")
             label.translatesAutoresizingMaskIntoConstraints = false
@@ -789,7 +1079,9 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
             target = clipGridView
         case .search:
             target = searchView
-        case .playlists, .settings:
+        case .playlists:
+            target = isShowingPlaylistDetail ? playlistDetailView : playlistsListView
+        case .settings:
             target = placeholderViews[item]!
         }
 
@@ -812,6 +1104,18 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
             DispatchQueue.main.async { [weak self] in
                 self?.updateSearchFlowLayoutItemSize()
                 self?.window?.makeFirstResponder(self?.searchField)
+            }
+        }
+
+        if item == .playlists {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if self.isShowingPlaylistDetail {
+                    self.updatePlaylistDetailFlowLayoutItemSize()
+                } else {
+                    self.updatePlaylistFlowLayoutItemSize()
+                    self.playlistCollectionView?.reloadData()
+                }
             }
         }
     }
@@ -846,13 +1150,29 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     }
 
     func collectionView(_ collectionView: NSCollectionView, numberOfItemsInSection section: Int) -> Int {
+        if collectionView == playlistCollectionView { return library.playlists.count }
+        if collectionView == playlistDetailCollectionView { return playlistDetailClips.count }
         if collectionView == searchCollectionView { return searchResults.count }
         return flatList.count
     }
 
     func collectionView(_ collectionView: NSCollectionView, itemForRepresentedObjectAt indexPath: IndexPath) -> NSCollectionViewItem {
+        if collectionView == playlistCollectionView {
+            let item = collectionView.makeItem(withIdentifier: PlaylistCardItem.identifier, for: indexPath) as! PlaylistCardItem
+            if indexPath.item < library.playlists.count {
+                let playlist = library.playlists[indexPath.item]
+                let clips = library.clips(in: playlist)
+                item.configure(name: playlist.name, clipCount: clips.count, coverThumbnailPath: clips.first?.thumbnailPath)
+            }
+            return item
+        }
+
         let item = collectionView.makeItem(withIdentifier: ClipCardItem.identifier, for: indexPath) as! ClipCardItem
-        let list = collectionView == searchCollectionView ? searchResults : flatList
+        let list: [ClipMetadata]
+        if collectionView == searchCollectionView { list = searchResults }
+        else if collectionView == playlistDetailCollectionView { list = playlistDetailClips }
+        else { list = flatList }
+
         if indexPath.item < list.count {
             let clip = list[indexPath.item]
             item.configure(with: clip)
@@ -865,9 +1185,10 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
                 if let idx = self.searchResults.firstIndex(where: { $0.id == clip.id }) {
                     self.searchResults[idx].isFavorite = isFavorite
                 }
-                if self.filterFavoritesOnly {
-                    self.updateSearchResults()
+                if let idx = self.playlistDetailClips.firstIndex(where: { $0.id == clip.id }) {
+                    self.playlistDetailClips[idx].isFavorite = isFavorite
                 }
+                if self.filterFavoritesOnly { self.updateSearchResults() }
             }
         }
         return item
@@ -877,7 +1198,17 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
 
     func collectionView(_ collectionView: NSCollectionView, didSelectItemsAt indexPaths: Set<IndexPath>) {
         guard let indexPath = indexPaths.first else { return }
-        let list = collectionView == searchCollectionView ? searchResults : flatList
+
+        if collectionView == playlistCollectionView {
+            guard indexPath.item < library.playlists.count else { return }
+            showPlaylistDetail(library.playlists[indexPath.item])
+            return
+        }
+
+        let list: [ClipMetadata]
+        if collectionView == searchCollectionView { list = searchResults }
+        else if collectionView == playlistDetailCollectionView { list = playlistDetailClips }
+        else { list = flatList }
         guard indexPath.item < list.count else { return }
         openClipInPlayer(list[indexPath.item])
     }
@@ -1027,6 +1358,8 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
                 w.toggleFullScreen(nil)
             } else if isShowingPlayer {
                 backToList()
+            } else if isShowingPlaylistDetail && currentNav == .playlists {
+                backToPlaylistList()
             }
         }
         if event.keyCode == 3 && isShowingPlayer && event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty {
@@ -1158,51 +1491,208 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
 
     // MARK: - Context Menu
 
-    private func clipAtClickPoint() -> ClipMetadata? {
-        let cv: NSCollectionView
-        let list: [ClipMetadata]
-        if currentNav == .search {
-            cv = searchCollectionView
-            list = searchResults
-        } else {
-            cv = clipCollectionView
-            list = flatList
-        }
-        let point = cv.convert(cv.window!.mouseLocationOutsideOfEventStream, from: nil)
-        guard let indexPath = cv.indexPathForItem(at: point), indexPath.item < list.count else { return nil }
+    private func clipAtClickPoint(in collectionView: NSCollectionView, from list: [ClipMetadata]) -> ClipMetadata? {
+        let point = collectionView.convert(collectionView.window!.mouseLocationOutsideOfEventStream, from: nil)
+        guard let indexPath = collectionView.indexPathForItem(at: point), indexPath.item < list.count else { return nil }
         return list[indexPath.item]
     }
 
+    private func playlistAtClickPoint() -> ClipLibrary.Playlist? {
+        let point = playlistCollectionView.convert(playlistCollectionView.window!.mouseLocationOutsideOfEventStream, from: nil)
+        guard let indexPath = playlistCollectionView.indexPathForItem(at: point), indexPath.item < library.playlists.count else { return nil }
+        return library.playlists[indexPath.item]
+    }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
-        guard let clip = clipAtClickPoint() else { return }
+        // Playlist card context menu
+        if menu == playlistCollectionView.menu {
+            contextMenuPlaylist = playlistAtClickPoint()
+            for item in menu.items { item.isHidden = contextMenuPlaylist == nil }
+            return
+        }
+
+        // Determine which clip collection view this menu belongs to
+        let clip: ClipMetadata?
+        if menu == searchCollectionView.menu {
+            clip = clipAtClickPoint(in: searchCollectionView, from: searchResults)
+        } else if menu == playlistDetailCollectionView.menu {
+            clip = clipAtClickPoint(in: playlistDetailCollectionView, from: playlistDetailClips)
+        } else {
+            clip = clipAtClickPoint(in: clipCollectionView, from: flatList)
+        }
+        contextMenuClip = clip
+
+        if clip == nil {
+            for item in menu.items { item.isHidden = true }
+            return
+        }
+
+        for item in menu.items { item.isHidden = false }
+
+        // Update favorites label
         for item in menu.items where item.action == #selector(contextToggleFavorite) {
-            item.title = clip.isFavorite ? "Remove from Favorites" : "Add to Favorites"
+            item.title = clip!.isFavorite ? "Remove from Favorites" : "Add to Favorites"
+        }
+
+        // Populate "Add to Playlist" submenu
+        if let clip, let submenuItem = menu.items.first(where: { $0.tag == 999 }), let submenu = submenuItem.submenu {
+            submenu.removeAllItems()
+            for playlist in library.playlists {
+                let mi = NSMenuItem(title: playlist.name, action: #selector(contextAddToPlaylist(_:)), keyEquivalent: "")
+                mi.target = self
+                mi.representedObject = playlist.id
+                mi.state = playlist.clipIDs.contains(clip.id) ? .on : .off
+                submenu.addItem(mi)
+            }
+            if !library.playlists.isEmpty {
+                submenu.addItem(NSMenuItem.separator())
+            }
+            let newItem = NSMenuItem(title: "New Playlist…", action: #selector(contextAddToNewPlaylist), keyEquivalent: "")
+            newItem.target = self
+            submenu.addItem(newItem)
         }
     }
 
     @objc private func contextToggleFavorite() {
-        guard let clip = clipAtClickPoint() else { return }
+        guard let clip = contextMenuClip else { return }
         library.setFavorite(clip, !clip.isFavorite)
         reloadClipGrid()
-        if currentNav == .search {
-            updateSearchResults()
-        }
+        if currentNav == .search { updateSearchResults() }
+        if isShowingPlaylistDetail { reloadPlaylistDetail() }
     }
 
     @objc private func contextRename() {
-        guard let clip = clipAtClickPoint() else { return }
+        guard let clip = contextMenuClip else { return }
         performRename(clip)
     }
 
     @objc private func contextDelete() {
-        guard let clip = clipAtClickPoint() else { return }
+        guard let clip = contextMenuClip else { return }
         performDelete(clip)
     }
 
     @objc private func contextShowInFinder() {
-        guard let clip = clipAtClickPoint() else { return }
+        guard let clip = contextMenuClip else { return }
         let url = library.directory.appendingPathComponent(clip.filename)
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    // MARK: - Playlist Actions
+
+    @objc private func createNewPlaylist() {
+        let alert = NSAlert()
+        alert.messageText = "New Playlist"
+        alert.informativeText = "Enter a name for the playlist:"
+        alert.addButton(withTitle: "Create")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 250, height: 24))
+        field.stringValue = "My Playlist"
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = field.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        library.createPlaylist(name: name)
+        playlistCollectionView?.reloadData()
+    }
+
+    @objc private func contextRenamePlaylist() {
+        guard let playlist = contextMenuPlaylist else { return }
+        let alert = NSAlert()
+        alert.messageText = "Rename Playlist"
+        alert.informativeText = "Enter a new name:"
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 250, height: 24))
+        field.stringValue = playlist.name
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = field.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        library.renamePlaylist(playlist, to: name)
+        playlistCollectionView?.reloadData()
+    }
+
+    @objc private func contextDeletePlaylist() {
+        guard let playlist = contextMenuPlaylist else { return }
+        let alert = NSAlert()
+        alert.messageText = "Delete Playlist?"
+        alert.informativeText = "Are you sure you want to delete \"\(playlist.name)\"? Clips will not be deleted."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        library.deletePlaylist(playlist)
+        playlistCollectionView?.reloadData()
+    }
+
+    @objc private func contextRemoveFromPlaylist() {
+        guard let clip = contextMenuClip, let playlist = activePlaylist else { return }
+        library.removeClip(clip, fromPlaylist: playlist)
+        reloadPlaylistDetail()
+    }
+
+    @objc private func contextAddToPlaylist(_ sender: NSMenuItem) {
+        guard let clip = contextMenuClip, let playlistID = sender.representedObject as? UUID else { return }
+        guard let playlist = library.playlists.first(where: { $0.id == playlistID }) else { return }
+        if playlist.clipIDs.contains(clip.id) {
+            library.removeClip(clip, fromPlaylist: playlist)
+        } else {
+            library.addClip(clip, toPlaylist: playlist)
+        }
+        if isShowingPlaylistDetail && activePlaylist?.id == playlistID {
+            reloadPlaylistDetail()
+        }
+    }
+
+    @objc private func contextAddToNewPlaylist() {
+        guard let clip = contextMenuClip else { return }
+        let alert = NSAlert()
+        alert.messageText = "New Playlist"
+        alert.informativeText = "Enter a name for the playlist:"
+        alert.addButton(withTitle: "Create")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 250, height: 24))
+        field.stringValue = "My Playlist"
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = field.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        let playlist = library.createPlaylist(name: name)
+        library.addClip(clip, toPlaylist: playlist)
+    }
+
+    private func showPlaylistDetail(_ playlist: ClipLibrary.Playlist) {
+        activePlaylist = playlist
+        isShowingPlaylistDetail = true
+        playlistDetailTitle.stringValue = playlist.name
+        reloadPlaylistDetail()
+        showMainView(for: .playlists)
+    }
+
+    @objc private func backToPlaylistList() {
+        activePlaylist = nil
+        isShowingPlaylistDetail = false
+        playlistDetailClips = []
+        showMainView(for: .playlists)
+    }
+
+    private func reloadPlaylistDetail() {
+        guard let playlist = activePlaylist,
+              let current = library.playlists.first(where: { $0.id == playlist.id }) else { return }
+        activePlaylist = current
+        playlistDetailTitle.stringValue = current.name
+        playlistDetailClips = library.clips(in: current)
+        playlistDetailCollectionView?.reloadData()
     }
 
     // MARK: - Rename / Delete

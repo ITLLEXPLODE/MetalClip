@@ -11,9 +11,17 @@ class ClipLibrary {
     weak var delegate: ClipLibraryDelegate?
 
     private(set) var clips: [ClipMetadata] = []
+    private(set) var playlists: [Playlist] = []
     let directory: URL
     private let metadataURL: URL
+    private let playlistsURL: URL
     private var isGeneratingThumbnails = false
+
+    struct Playlist: Codable, Identifiable {
+        let id: UUID
+        var name: String
+        var clipIDs: [UUID]
+    }
 
     var thumbnailsDirectory: URL {
         directory.appendingPathComponent(".thumbnails")
@@ -22,8 +30,10 @@ class ClipLibrary {
     init(directory: URL) {
         self.directory = directory
         self.metadataURL = directory.appendingPathComponent(".metadata.json")
+        self.playlistsURL = directory.appendingPathComponent(".playlists.json")
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try? FileManager.default.createDirectory(at: directory.appendingPathComponent(".thumbnails"), withIntermediateDirectories: true)
+        loadPlaylists()
     }
 
     // MARK: - Load & Scan
@@ -84,7 +94,11 @@ class ClipLibrary {
             try? FileManager.default.removeItem(atPath: thumbPath)
         }
         clips.removeAll { $0.id == clip.id }
+        for i in playlists.indices {
+            playlists[i].clipIDs.removeAll { $0 == clip.id }
+        }
         saveMetadataFile()
+        savePlaylists()
         delegate?.clipLibraryDidUpdate()
     }
 
@@ -98,8 +112,64 @@ class ClipLibrary {
         saveMetadataFile()
     }
 
+    // MARK: - Playlists
+
+    @discardableResult
+    func createPlaylist(name: String) -> Playlist {
+        let p = Playlist(id: UUID(), name: name, clipIDs: [])
+        playlists.append(p)
+        savePlaylists()
+        return p
+    }
+
+    func deletePlaylist(_ playlist: Playlist) {
+        playlists.removeAll { $0.id == playlist.id }
+        savePlaylists()
+    }
+
+    func renamePlaylist(_ playlist: Playlist, to newName: String) {
+        guard let idx = playlists.firstIndex(where: { $0.id == playlist.id }) else { return }
+        playlists[idx].name = newName
+        savePlaylists()
+    }
+
+    func addClip(_ clip: ClipMetadata, toPlaylist playlist: Playlist) {
+        guard let idx = playlists.firstIndex(where: { $0.id == playlist.id }) else { return }
+        guard !playlists[idx].clipIDs.contains(clip.id) else { return }
+        playlists[idx].clipIDs.append(clip.id)
+        savePlaylists()
+    }
+
+    func removeClip(_ clip: ClipMetadata, fromPlaylist playlist: Playlist) {
+        guard let idx = playlists.firstIndex(where: { $0.id == playlist.id }) else { return }
+        playlists[idx].clipIDs.removeAll { $0 == clip.id }
+        savePlaylists()
+    }
+
+    func clips(in playlist: Playlist) -> [ClipMetadata] {
+        // FUTURE: drag-reorder clips within a playlist
+        playlist.clipIDs.compactMap { clipID in
+            clips.first { $0.id == clipID }
+        }
+    }
+
+    private func loadPlaylists() {
+        guard let data = try? Data(contentsOf: playlistsURL),
+              let decoded = try? JSONDecoder().decode([Playlist].self, from: data) else {
+            playlists = []
+            return
+        }
+        playlists = decoded
+    }
+
+    private func savePlaylists() {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        guard let data = try? encoder.encode(playlists) else { return }
+        try? data.write(to: playlistsURL, options: .atomic)
+    }
+
     // FUTURE: compress(clip:) -> ClipMetadata
-    // FUTURE: clips(inPlaylist:) -> [ClipMetadata]
 
     // MARK: - Search & Filtering
 
