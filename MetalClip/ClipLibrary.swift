@@ -216,7 +216,7 @@ class ClipLibrary {
         Array(Set(clips.compactMap(\.gameLabel))).sorted()
     }
 
-    func search(text: String, dateFilters: Set<DateFilter>, lengthFilters: Set<LengthFilter>, gameFilters: Set<String>, favoritesOnly: Bool = false) -> [ClipMetadata] {
+    func search(text: String, dateFilters: Set<DateFilter>, lengthFilters: Set<LengthFilter>, gameFilters: Set<String>, favoritesOnly: Bool = false, customDateRange: (start: Date, end: Date)? = nil) -> [ClipMetadata] {
         // FUTURE: add quality/tag filters here
         var results = clips
 
@@ -228,7 +228,10 @@ class ClipLibrary {
             results = results.filter { $0.filename.localizedCaseInsensitiveContains(text) }
         }
 
-        if !dateFilters.isEmpty && !dateFilters.contains(.all) {
+        if let range = customDateRange {
+            let endOfDay = Calendar.current.date(byAdding: .day, value: 1, to: range.end) ?? range.end
+            results = results.filter { $0.dateCreated >= range.start && $0.dateCreated < endOfDay }
+        } else if !dateFilters.isEmpty && !dateFilters.contains(.all) {
             let calendar = Calendar.current
             let now = Date()
             results = results.filter { clip in

@@ -345,6 +345,8 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     private var clipCollectionView: NSCollectionView!
     private var gridScrollView: NSScrollView!
     private var sortPopup: NSPopUpButton!
+    private var allClipsFavoritesButton: NSButton!
+    private var allClipsFavoritesOnly = false
 
     private var playerContainerView: NSView!
     private var playerView: AVPlayerView!
@@ -398,6 +400,9 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     private var selectedGameFilters: Set<String> = []
     private var searchResults: [ClipMetadata] = []
     private var filterFavoritesOnly = false
+    private var customDateChip: NSButton!
+    private var customDateStart: Date?
+    private var customDateEnd: Date?
 
     private var activePlaylist: ClipLibrary.Playlist?
     private var playlistDetailClips: [ClipMetadata] = []
@@ -583,6 +588,13 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         sortPopup.action = #selector(sortChanged)
         clipGridView.addSubview(sortPopup)
 
+        allClipsFavoritesButton = NSButton(title: "Favorites", image: NSImage(systemSymbolName: "star", accessibilityDescription: "Favorites")!, target: self, action: #selector(allClipsFavoritesToggled))
+        allClipsFavoritesButton.translatesAutoresizingMaskIntoConstraints = false
+        allClipsFavoritesButton.setButtonType(.pushOnPushOff)
+        allClipsFavoritesButton.bezelStyle = .rounded
+        allClipsFavoritesButton.imagePosition = .imageLeading
+        clipGridView.addSubview(allClipsFavoritesButton)
+
         let flowLayout = NSCollectionViewFlowLayout()
         flowLayout.minimumInteritemSpacing = 12
         flowLayout.minimumLineSpacing = 16
@@ -631,6 +643,9 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
             sortPopup.leadingAnchor.constraint(equalTo: clipGridView.leadingAnchor, constant: 12),
             sortPopup.topAnchor.constraint(equalTo: clipGridView.topAnchor, constant: 8),
 
+            allClipsFavoritesButton.leadingAnchor.constraint(equalTo: sortPopup.trailingAnchor, constant: 8),
+            allClipsFavoritesButton.centerYAnchor.constraint(equalTo: sortPopup.centerYAnchor),
+
             gridScrollView.leadingAnchor.constraint(equalTo: clipGridView.leadingAnchor),
             gridScrollView.trailingAnchor.constraint(equalTo: clipGridView.trailingAnchor),
             gridScrollView.topAnchor.constraint(equalTo: sortPopup.bottomAnchor, constant: 6),
@@ -675,6 +690,8 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         for filter in ClipLibrary.DateFilter.allCases {
             dateChipRow.addArrangedSubview(makeChip(title: filter.title, action: #selector(dateChipToggled(_:)), tag: filter.rawValue))
         }
+        customDateChip = makeChip(title: "Custom", action: #selector(customDateChipToggled(_:)), tag: 100)
+        dateChipRow.addArrangedSubview(customDateChip)
         searchView.addSubview(dateChipRow)
 
         lengthChipRow = NSStackView()
@@ -1635,6 +1652,9 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     private func reloadClipGrid() {
         displayGroups = library.grouped(by: currentSort)
         flatList = displayGroups.flatMap(\.clips)
+        if allClipsFavoritesOnly {
+            flatList = flatList.filter { $0.isFavorite }
+        }
         clipCollectionView?.reloadData()
     }
 
@@ -1907,10 +1927,16 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     @objc private func dateChipToggled(_ sender: NSButton) {
         guard let filter = ClipLibrary.DateFilter(rawValue: sender.tag) else { return }
 
+        // Deselect Custom when any preset is selected
+        customDateChip.state = .off
+        customDateStart = nil
+        customDateEnd = nil
+        customDateChip.title = "Custom"
+
         if filter == .all {
             if sender.state == .on {
                 selectedDateFilters = [.all]
-                for view in dateChipRow.arrangedSubviews where view !== sender {
+                for view in dateChipRow.arrangedSubviews where view !== sender && view !== customDateChip {
                     (view as? NSButton)?.state = .off
                 }
             } else {
@@ -1930,6 +1956,75 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
             }
         }
         updateSearchResults()
+    }
+
+    @objc private func customDateChipToggled(_ sender: NSButton) {
+        if sender.state == .on {
+            // Deselect all preset date chips
+            selectedDateFilters.removeAll()
+            for view in dateChipRow.arrangedSubviews where view !== customDateChip {
+                (view as? NSButton)?.state = .off
+            }
+            showCustomDatePicker()
+        } else {
+            customDateStart = nil
+            customDateEnd = nil
+            customDateChip.title = "Custom"
+            updateSearchResults()
+        }
+    }
+
+    private func showCustomDatePicker() {
+        let alert = NSAlert()
+        alert.messageText = "Custom Date Range"
+        alert.informativeText = "Select start and end dates:"
+        alert.addButton(withTitle: "Apply")
+        alert.addButton(withTitle: "Cancel")
+
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 60))
+
+        let startLabel = NSTextField(labelWithString: "From:")
+        startLabel.frame = NSRect(x: 0, y: 32, width: 40, height: 20)
+        startLabel.font = .systemFont(ofSize: 12)
+        container.addSubview(startLabel)
+
+        let startPicker = NSDatePicker()
+        startPicker.frame = NSRect(x: 44, y: 30, width: 240, height: 24)
+        startPicker.datePickerStyle = .textFieldAndStepper
+        startPicker.datePickerElements = .yearMonthDay
+        startPicker.dateValue = customDateStart ?? Calendar.current.date(byAdding: .day, value: -7, to: Date())!
+        container.addSubview(startPicker)
+
+        let endLabel = NSTextField(labelWithString: "To:")
+        endLabel.frame = NSRect(x: 0, y: 2, width: 40, height: 20)
+        endLabel.font = .systemFont(ofSize: 12)
+        container.addSubview(endLabel)
+
+        let endPicker = NSDatePicker()
+        endPicker.frame = NSRect(x: 44, y: 0, width: 240, height: 24)
+        endPicker.datePickerStyle = .textFieldAndStepper
+        endPicker.datePickerElements = .yearMonthDay
+        endPicker.dateValue = customDateEnd ?? Date()
+        container.addSubview(endPicker)
+
+        alert.accessoryView = container
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            customDateStart = startPicker.dateValue
+            customDateEnd = endPicker.dateValue
+
+            let fmt = DateFormatter()
+            fmt.dateStyle = .medium
+            fmt.timeStyle = .none
+            customDateChip.title = "\(fmt.string(from: customDateStart!)) – \(fmt.string(from: customDateEnd!))"
+
+            updateSearchResults()
+        } else {
+            // Cancelled — turn off chip if no range was set
+            if customDateStart == nil {
+                customDateChip.state = .off
+            }
+        }
     }
 
     @objc private func lengthChipToggled(_ sender: NSButton) {
@@ -1964,7 +2059,8 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     }
 
     private func updateSearchResults() {
-        let hasActiveFilter = !searchText.isEmpty || !selectedDateFilters.isEmpty || !selectedLengthFilters.isEmpty || !selectedGameFilters.isEmpty || filterFavoritesOnly
+        let hasCustomDate = customDateStart != nil && customDateEnd != nil
+        let hasActiveFilter = !searchText.isEmpty || !selectedDateFilters.isEmpty || !selectedLengthFilters.isEmpty || !selectedGameFilters.isEmpty || filterFavoritesOnly || hasCustomDate
 
         if !hasActiveFilter {
             searchResults = []
@@ -1975,7 +2071,8 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
             return
         }
 
-        searchResults = library.search(text: searchText, dateFilters: selectedDateFilters, lengthFilters: selectedLengthFilters, gameFilters: selectedGameFilters, favoritesOnly: filterFavoritesOnly)
+        let customRange: (start: Date, end: Date)? = hasCustomDate ? (customDateStart!, customDateEnd!) : nil
+        searchResults = library.search(text: searchText, dateFilters: selectedDateFilters, lengthFilters: selectedLengthFilters, gameFilters: selectedGameFilters, favoritesOnly: filterFavoritesOnly, customDateRange: customRange)
         searchCollectionView?.reloadData()
 
         if searchResults.isEmpty {
@@ -2005,6 +2102,14 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
 
     @objc private func sortChanged() {
         currentSort = ClipLibrary.SortOrder(rawValue: sortPopup.indexOfSelectedItem) ?? .newestFirst
+        reloadClipGrid()
+    }
+
+    @objc private func allClipsFavoritesToggled() {
+        allClipsFavoritesOnly = allClipsFavoritesButton.state == .on
+        let symbolName = allClipsFavoritesOnly ? "star.fill" : "star"
+        allClipsFavoritesButton.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Favorites")
+        allClipsFavoritesButton.contentTintColor = allClipsFavoritesOnly ? .systemYellow : nil
         reloadClipGrid()
     }
 
