@@ -351,15 +351,17 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     private var player: AVPlayer?
     private var playerBackButton: NSButton!
     private var playerFullscreenButton: NSButton!
-    private var playerInfoLabel: NSTextField!
+    private var playerFilenameLabel: NSTextField!
+    private var playerDetailsLabel: NSTextField!
+    private var playerInfoBar: NSView!
+    private var playerFavoriteButton: NSButton!
+    private var playerPlaylistPopup: NSPopUpButton!
     private var playerRenameButton: NSButton!
     private var playerDeleteButton: NSButton!
     private var playerFinderButton: NSButton!
-    // FUTURE: add Enhance, Share, Compress buttons to player action row
 
     private var playerNormalConstraints: [NSLayoutConstraint] = []
     private var fullscreenOverlayConstraints: [NSLayoutConstraint] = []
-    private var buttonStack: NSStackView!
 
     private var searchView: NSView!
     private var searchField: NSSearchField!
@@ -992,33 +994,69 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         playerView.allowsPictureInPicturePlayback = true
         playerView.wantsLayer = true
         playerView.layer?.backgroundColor = NSColor.black.cgColor
+        playerView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         playerContainerView.addSubview(playerView)
 
-        playerInfoLabel = NSTextField(labelWithString: "")
-        playerInfoLabel.translatesAutoresizingMaskIntoConstraints = false
-        playerInfoLabel.font = .systemFont(ofSize: 12)
-        playerInfoLabel.textColor = .secondaryLabelColor
-        playerInfoLabel.lineBreakMode = .byTruncatingTail
-        playerInfoLabel.maximumNumberOfLines = 2
-        playerContainerView.addSubview(playerInfoLabel)
+        // Info/action bar
+        playerInfoBar = NSView()
+        playerInfoBar.translatesAutoresizingMaskIntoConstraints = false
+        playerInfoBar.wantsLayer = true
+        playerInfoBar.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        playerContainerView.addSubview(playerInfoBar)
 
-        buttonStack = NSStackView()
+        playerFilenameLabel = NSTextField(labelWithString: "")
+        playerFilenameLabel.translatesAutoresizingMaskIntoConstraints = false
+        playerFilenameLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        playerFilenameLabel.textColor = .labelColor
+        playerFilenameLabel.lineBreakMode = .byTruncatingTail
+        playerInfoBar.addSubview(playerFilenameLabel)
+
+        playerDetailsLabel = NSTextField(labelWithString: "")
+        playerDetailsLabel.translatesAutoresizingMaskIntoConstraints = false
+        playerDetailsLabel.font = .systemFont(ofSize: 12)
+        playerDetailsLabel.textColor = .secondaryLabelColor
+        playerDetailsLabel.lineBreakMode = .byTruncatingTail
+        playerInfoBar.addSubview(playerDetailsLabel)
+
+        let separator = NSView()
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        separator.wantsLayer = true
+        separator.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        playerInfoBar.addSubview(separator)
+
+        let buttonStack = NSStackView()
         buttonStack.translatesAutoresizingMaskIntoConstraints = false
         buttonStack.orientation = .horizontal
         buttonStack.spacing = 8
 
-        playerRenameButton = NSButton(title: "Rename", target: self, action: #selector(renameAction))
-        playerRenameButton.bezelStyle = .rounded
-        playerDeleteButton = NSButton(title: "Delete", target: self, action: #selector(deleteAction))
-        playerDeleteButton.bezelStyle = .rounded
-        playerFinderButton = NSButton(title: "Show in Finder", target: self, action: #selector(showInFinderAction))
-        playerFinderButton.bezelStyle = .rounded
+        playerFavoriteButton = NSButton(title: "Favorite", image: NSImage(systemSymbolName: "star", accessibilityDescription: "Favorite")!, target: self, action: #selector(playerFavoriteToggled))
+        playerFavoriteButton.bezelStyle = .rounded
+        playerFavoriteButton.imagePosition = .imageLeading
 
+        playerPlaylistPopup = NSPopUpButton()
+        playerPlaylistPopup.bezelStyle = .rounded
+        playerPlaylistPopup.pullsDown = true
+        playerPlaylistPopup.imagePosition = .imageLeading
+
+        playerRenameButton = NSButton(title: "Rename", image: NSImage(systemSymbolName: "pencil", accessibilityDescription: "Rename")!, target: self, action: #selector(renameAction))
+        playerRenameButton.bezelStyle = .rounded
+        playerRenameButton.imagePosition = .imageLeading
+
+        playerDeleteButton = NSButton(title: "Delete", image: NSImage(systemSymbolName: "trash", accessibilityDescription: "Delete")!, target: self, action: #selector(deleteAction))
+        playerDeleteButton.bezelStyle = .rounded
+        playerDeleteButton.imagePosition = .imageLeading
+
+        playerFinderButton = NSButton(title: "Finder", image: NSImage(systemSymbolName: "folder", accessibilityDescription: "Show in Finder")!, target: self, action: #selector(showInFinderAction))
+        playerFinderButton.bezelStyle = .rounded
+        playerFinderButton.imagePosition = .imageLeading
+
+        buttonStack.addArrangedSubview(playerFavoriteButton)
+        buttonStack.addArrangedSubview(playerPlaylistPopup)
         buttonStack.addArrangedSubview(playerRenameButton)
         buttonStack.addArrangedSubview(playerDeleteButton)
         buttonStack.addArrangedSubview(playerFinderButton)
-        // FUTURE: add Enhance, Share, Compress buttons to buttonStack
-        playerContainerView.addSubview(buttonStack)
+        // FUTURE: [Enhance] (Stage 6)  [Export]  [Trim]
+        playerInfoBar.addSubview(buttonStack)
 
         NSLayoutConstraint.activate([
             playerBackButton.leadingAnchor.constraint(equalTo: playerContainerView.leadingAnchor, constant: 12),
@@ -1030,17 +1068,32 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
             playerView.leadingAnchor.constraint(equalTo: playerContainerView.leadingAnchor),
             playerView.trailingAnchor.constraint(equalTo: playerContainerView.trailingAnchor),
 
-            playerInfoLabel.leadingAnchor.constraint(equalTo: playerContainerView.leadingAnchor, constant: 12),
-            playerInfoLabel.trailingAnchor.constraint(equalTo: playerContainerView.trailingAnchor, constant: -12),
-            playerInfoLabel.bottomAnchor.constraint(equalTo: buttonStack.topAnchor, constant: -6),
+            playerInfoBar.leadingAnchor.constraint(equalTo: playerContainerView.leadingAnchor),
+            playerInfoBar.trailingAnchor.constraint(equalTo: playerContainerView.trailingAnchor),
+            playerInfoBar.bottomAnchor.constraint(equalTo: playerContainerView.bottomAnchor),
+            playerInfoBar.heightAnchor.constraint(equalToConstant: 90),
 
-            buttonStack.leadingAnchor.constraint(equalTo: playerContainerView.leadingAnchor, constant: 12),
-            buttonStack.bottomAnchor.constraint(equalTo: playerContainerView.bottomAnchor, constant: -10),
+            playerFilenameLabel.leadingAnchor.constraint(equalTo: playerInfoBar.leadingAnchor, constant: 12),
+            playerFilenameLabel.trailingAnchor.constraint(equalTo: playerInfoBar.trailingAnchor, constant: -12),
+            playerFilenameLabel.topAnchor.constraint(equalTo: playerInfoBar.topAnchor, constant: 8),
+
+            playerDetailsLabel.leadingAnchor.constraint(equalTo: playerInfoBar.leadingAnchor, constant: 12),
+            playerDetailsLabel.trailingAnchor.constraint(equalTo: playerInfoBar.trailingAnchor, constant: -12),
+            playerDetailsLabel.topAnchor.constraint(equalTo: playerFilenameLabel.bottomAnchor, constant: 2),
+
+            separator.leadingAnchor.constraint(equalTo: playerInfoBar.leadingAnchor, constant: 12),
+            separator.trailingAnchor.constraint(equalTo: playerInfoBar.trailingAnchor, constant: -12),
+            separator.topAnchor.constraint(equalTo: playerDetailsLabel.bottomAnchor, constant: 6),
+            separator.heightAnchor.constraint(equalToConstant: 1),
+
+            buttonStack.leadingAnchor.constraint(equalTo: playerInfoBar.leadingAnchor, constant: 12),
+            buttonStack.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 6),
+            buttonStack.bottomAnchor.constraint(equalTo: playerInfoBar.bottomAnchor, constant: -8),
         ])
 
         playerNormalConstraints = [
             playerView.topAnchor.constraint(equalTo: playerBackButton.bottomAnchor, constant: 4),
-            playerView.bottomAnchor.constraint(equalTo: playerInfoLabel.topAnchor, constant: -8),
+            playerView.bottomAnchor.constraint(equalTo: playerInfoBar.topAnchor),
         ]
 
         NSLayoutConstraint.activate(playerNormalConstraints)
@@ -1735,9 +1788,49 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         showPlayerInMain()
     }
 
-        private func updatePlayerInfo() {
+    private func updatePlayerInfo() {
         guard let clip = activeClip else { return }
-        playerInfoLabel.stringValue = "\(clip.filename)\n\(clip.durationFormatted) \u{00B7} \(clip.resolution) \u{00B7} \(clip.fileSizeFormatted) \u{00B7} \(clip.relativeDateFormatted)"
+        playerFilenameLabel.stringValue = clip.filename
+
+        var details = [clip.durationFormatted, clip.resolution, clip.fileSizeFormatted, clip.relativeDateFormatted]
+        if let game = clip.gameLabel, !game.isEmpty {
+            details.append(game)
+        }
+        playerDetailsLabel.stringValue = details.joined(separator: " \u{00B7} ")
+
+        updatePlayerFavoriteButton()
+        updatePlayerPlaylistPopup()
+    }
+
+    private func updatePlayerFavoriteButton() {
+        guard let clip = activeClip else { return }
+        let symbolName = clip.isFavorite ? "star.fill" : "star"
+        playerFavoriteButton.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Favorite")
+        playerFavoriteButton.contentTintColor = clip.isFavorite ? .systemYellow : nil
+        playerFavoriteButton.title = clip.isFavorite ? "Favorited" : "Favorite"
+    }
+
+    private func updatePlayerPlaylistPopup() {
+        playerPlaylistPopup.removeAllItems()
+        let headerItem = NSMenuItem(title: "Add to Playlist", action: nil, keyEquivalent: "")
+        headerItem.image = NSImage(systemSymbolName: "list.bullet.rectangle", accessibilityDescription: "Add to Playlist")
+        playerPlaylistPopup.menu?.addItem(headerItem)
+
+        for playlist in library.playlists {
+            let mi = NSMenuItem(title: playlist.name, action: #selector(playerAddToPlaylist(_:)), keyEquivalent: "")
+            mi.target = self
+            mi.representedObject = playlist.id
+            if let clip = activeClip, playlist.clipIDs.contains(clip.id) {
+                mi.state = .on
+            }
+            playerPlaylistPopup.menu?.addItem(mi)
+        }
+        if !library.playlists.isEmpty {
+            playerPlaylistPopup.menu?.addItem(NSMenuItem.separator())
+        }
+        let newItem = NSMenuItem(title: "New Playlist\u{2026}", action: #selector(playerAddToNewPlaylist), keyEquivalent: "")
+        newItem.target = self
+        playerPlaylistPopup.menu?.addItem(newItem)
     }
 
     @objc private func backToList() {
@@ -1929,6 +2022,56 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         guard let clip = activeClip else { return }
         let url = library.directory.appendingPathComponent(clip.filename)
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    @objc private func playerFavoriteToggled() {
+        guard var clip = activeClip else { return }
+        clip.isFavorite.toggle()
+        library.setFavorite(clip, clip.isFavorite)
+        activeClip = clip
+        if let idx = flatList.firstIndex(where: { $0.id == clip.id }) {
+            flatList[idx].isFavorite = clip.isFavorite
+        }
+        if let idx = searchResults.firstIndex(where: { $0.id == clip.id }) {
+            searchResults[idx].isFavorite = clip.isFavorite
+        }
+        if let idx = playlistDetailClips.firstIndex(where: { $0.id == clip.id }) {
+            playlistDetailClips[idx].isFavorite = clip.isFavorite
+        }
+        updatePlayerFavoriteButton()
+    }
+
+    @objc private func playerAddToPlaylist(_ sender: NSMenuItem) {
+        guard let clip = activeClip, let playlistID = sender.representedObject as? UUID else { return }
+        guard let playlist = library.playlists.first(where: { $0.id == playlistID }) else { return }
+        if playlist.clipIDs.contains(clip.id) {
+            library.removeClip(clip, fromPlaylist: playlist)
+        } else {
+            library.addClip(clip, toPlaylist: playlist)
+        }
+        if isShowingPlaylistDetail && activePlaylist?.id == playlistID {
+            reloadPlaylistDetail()
+        }
+    }
+
+    @objc private func playerAddToNewPlaylist() {
+        guard let clip = activeClip else { return }
+        let alert = NSAlert()
+        alert.messageText = "New Playlist"
+        alert.informativeText = "Enter a name for the playlist:"
+        alert.addButton(withTitle: "Create")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 250, height: 24))
+        field.stringValue = "My Playlist"
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = field.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        let playlist = library.createPlaylist(name: name)
+        library.addClip(clip, toPlaylist: playlist)
     }
 
     // MARK: - Context Menu
