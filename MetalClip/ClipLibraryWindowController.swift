@@ -1,5 +1,6 @@
 import Cocoa
 import AVKit
+import ServiceManagement
 
 // MARK: - ClipCardItem
 
@@ -356,7 +357,6 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     private var playerFinderButton: NSButton!
     // FUTURE: add Enhance, Share, Compress buttons to player action row
 
-    private var placeholderViews: [NavItem: NSView] = [:]
     private var playerNormalConstraints: [NSLayoutConstraint] = []
     private var fullscreenOverlayConstraints: [NSLayoutConstraint] = []
     private var buttonStack: NSStackView!
@@ -402,6 +402,12 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     private var isShowingPlaylistDetail = false
     private var contextMenuClip: ClipMetadata?
     private var contextMenuPlaylist: ClipLibrary.Playlist?
+
+    private var settingsView: NSView!
+    private var qualityPopup: NSPopUpButton!
+    private var bufferPopup: NSPopUpButton!
+    private var clipLengthPopup: NSPopUpButton!
+    private var storageInfoLabel: NSTextField!
 
     // MARK: - Init
 
@@ -1043,25 +1049,457 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     // MARK: - Placeholder Views
 
     private func buildPlaceholders() {
-        for item in [NavItem.settings] {
-            let view = NSView()
-            view.translatesAutoresizingMaskIntoConstraints = false
+        buildSettingsView()
+    }
 
-            // FUTURE: replace placeholder with real Settings view (4B-8)
-            let label = NSTextField(labelWithString: "\(item.title) coming soon")
-            label.translatesAutoresizingMaskIntoConstraints = false
-            label.font = .systemFont(ofSize: 18, weight: .medium)
-            label.textColor = .tertiaryLabelColor
-            label.alignment = .center
-            view.addSubview(label)
+    // MARK: - Settings View
 
-            NSLayoutConstraint.activate([
-                label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-                label.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            ])
+    private func makeSectionHeader(_ title: String) -> NSTextField {
+        let label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: 13, weight: .bold)
+        label.textColor = .labelColor
+        return label
+    }
 
-            placeholderViews[item] = view
+    private func makeToggleRow(title: String, isOn: Bool, action: Selector) -> (row: NSView, toggle: NSSwitch) {
+        let row = NSView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+
+        let label = NSTextField(labelWithString: title)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = .systemFont(ofSize: 13)
+        label.lineBreakMode = .byTruncatingTail
+        row.addSubview(label)
+
+        let toggle = NSSwitch()
+        toggle.translatesAutoresizingMaskIntoConstraints = false
+        toggle.target = self
+        toggle.action = action
+        toggle.state = isOn ? .on : .off
+        row.addSubview(toggle)
+
+        NSLayoutConstraint.activate([
+            row.heightAnchor.constraint(equalToConstant: 28),
+            label.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            label.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            toggle.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            toggle.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: toggle.leadingAnchor, constant: -8),
+        ])
+
+        return (row, toggle)
+    }
+
+    private func makeDropdownRow(title: String, items: [String], selected: Int, action: Selector) -> (row: NSView, popup: NSPopUpButton) {
+        let row = NSView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+
+        let label = NSTextField(labelWithString: title)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = .systemFont(ofSize: 13)
+        label.lineBreakMode = .byTruncatingTail
+        row.addSubview(label)
+
+        let popup = NSPopUpButton()
+        popup.translatesAutoresizingMaskIntoConstraints = false
+        popup.target = self
+        popup.action = action
+        for item in items { popup.addItem(withTitle: item) }
+        if selected >= 0 && selected < items.count {
+            popup.selectItem(at: selected)
         }
+        row.addSubview(popup)
+
+        NSLayoutConstraint.activate([
+            row.heightAnchor.constraint(equalToConstant: 28),
+            label.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            label.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            popup.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            popup.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            popup.widthAnchor.constraint(greaterThanOrEqualToConstant: 200),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: popup.leadingAnchor, constant: -8),
+        ])
+
+        return (row, popup)
+    }
+
+    private func makeButtonRow(title: String, style: NSButton.BezelStyle = .rounded, action: Selector) -> NSView {
+        let row = NSView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+
+        let button = NSButton(title: title, target: self, action: action)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.bezelStyle = style
+        row.addSubview(button)
+
+        NSLayoutConstraint.activate([
+            row.heightAnchor.constraint(equalToConstant: 32),
+            button.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            button.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+        ])
+
+        return row
+    }
+
+    private func makeInfoRow(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 13)
+        label.textColor = .secondaryLabelColor
+        label.lineBreakMode = .byTruncatingTail
+        return label
+    }
+
+    private func makeDisabledRow(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 13)
+        label.textColor = .tertiaryLabelColor
+        return label
+    }
+
+    private func makeSeparator() -> NSView {
+        let sep = NSView()
+        sep.translatesAutoresizingMaskIntoConstraints = false
+        sep.wantsLayer = true
+        sep.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        sep.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        return sep
+    }
+
+    private func buildSettingsView() {
+        settingsView = NSView()
+        settingsView.translatesAutoresizingMaskIntoConstraints = false
+
+        let appDelegate = NSApp.delegate as! AppDelegate
+
+        let stack = NSStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+
+        // ── Capture Defaults ──
+
+        stack.addArrangedSubview(makeSectionHeader("Capture Defaults"))
+
+        let qualityItems = buildQualityDropdownItems()
+        let qualitySelected = qualitySelectedIndex()
+        let (qualityRow, qPopup) = makeDropdownRow(title: "Quality:", items: qualityItems, selected: qualitySelected, action: #selector(settingsQualityChanged))
+        qualityPopup = qPopup
+        stack.addArrangedSubview(qualityRow)
+
+        let bufferItems = buildBufferDropdownItems()
+        let bufferSelected = bufferSelectedIndex()
+        let (bufferRow, bPopup) = makeDropdownRow(title: "Buffer:", items: bufferItems, selected: bufferSelected, action: #selector(settingsBufferChanged))
+        bufferPopup = bPopup
+        stack.addArrangedSubview(bufferRow)
+
+        let clipItems = buildClipLengthDropdownItems()
+        let clipSelected = clipLengthSelectedIndex()
+        let (clipRow, cPopup) = makeDropdownRow(title: "Clip Length:", items: clipItems, selected: clipSelected, action: #selector(settingsClipLengthChanged))
+        clipLengthPopup = cPopup
+        stack.addArrangedSubview(clipRow)
+        updateClipLengthEnabledStates()
+
+        let (autoStartRow, _) = makeToggleRow(title: "Start capturing on launch", isOn: appDelegate.autoStartCapture, action: #selector(settingsAutoStartChanged))
+        stack.addArrangedSubview(autoStartRow)
+
+        stack.addArrangedSubview(makeSeparator())
+
+        // ── Behavior ──
+
+        stack.addArrangedSubview(makeSectionHeader("Behavior"))
+
+        let (openLibRow, _) = makeToggleRow(title: "Open library when a clip is saved", isOn: appDelegate.openLibraryOnSave, action: #selector(settingsOpenLibraryChanged))
+        stack.addArrangedSubview(openLibRow)
+
+        let (notifyRow, _) = makeToggleRow(title: "Notify when a clip is saved", isOn: appDelegate.notifyOnSave, action: #selector(settingsNotifyChanged))
+        stack.addArrangedSubview(notifyRow)
+
+        let (loginRow, _) = makeToggleRow(title: "Launch at login", isOn: appDelegate.launchAtLogin, action: #selector(settingsLaunchAtLoginChanged))
+        stack.addArrangedSubview(loginRow)
+
+        stack.addArrangedSubview(makeSeparator())
+
+        // ── Storage ──
+
+        stack.addArrangedSubview(makeSectionHeader("Storage"))
+
+        storageInfoLabel = makeInfoRow("Calculating…")
+        stack.addArrangedSubview(storageInfoLabel)
+
+        stack.addArrangedSubview(makeSeparator())
+
+        // ── Reset ──
+
+        stack.addArrangedSubview(makeSectionHeader("Reset"))
+
+        stack.addArrangedSubview(makeButtonRow(title: "Reset Warning Dialogs", action: #selector(settingsResetWarnings)))
+        stack.addArrangedSubview(makeButtonRow(title: "Reset All Settings", action: #selector(settingsResetAll)))
+
+        stack.addArrangedSubview(makeSeparator())
+
+        // ── About ──
+
+        stack.addArrangedSubview(makeSectionHeader("About"))
+
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
+        stack.addArrangedSubview(makeInfoRow("MetalClip v\(version)"))
+
+        let linkButton = NSButton(title: "GitHub: ITLLEXPLODE/MetalClip", target: self, action: #selector(settingsOpenGitHub))
+        linkButton.isBordered = false
+        linkButton.contentTintColor = .controlAccentColor
+        linkButton.font = .systemFont(ofSize: 13)
+        stack.addArrangedSubview(linkButton)
+
+        stack.addArrangedSubview(makeSeparator())
+
+        // ── Coming Soon ──
+        // ROADMAP: Enable these rows as features ship
+
+        stack.addArrangedSubview(makeSectionHeader("Coming Soon"))
+        stack.addArrangedSubview(makeDisabledRow("Microphone input (coming soon)"))        // ROADMAP: Stage 5
+        stack.addArrangedSubview(makeDisabledRow("Compressed storage (coming soon)"))      // ROADMAP: Stage 6
+        stack.addArrangedSubview(makeDisabledRow("Auto game detection (coming soon)"))     // ROADMAP: Stage 7
+        stack.addArrangedSubview(makeDisabledRow("Auto-delete old clips (coming soon)"))   // ROADMAP: storage mgmt
+        stack.addArrangedSubview(makeDisabledRow("Custom hotkeys (coming soon)"))          // ROADMAP: hotkey editor
+
+        // ── Layout ──
+
+        let scrollView = NSScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+
+        let documentView = NSView()
+        documentView.translatesAutoresizingMaskIntoConstraints = false
+        documentView.addSubview(stack)
+        scrollView.documentView = documentView
+
+        settingsView.addSubview(scrollView)
+
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: settingsView.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: settingsView.trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: settingsView.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: settingsView.bottomAnchor),
+
+            stack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor, constant: -20),
+            stack.topAnchor.constraint(equalTo: documentView.topAnchor, constant: 16),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: documentView.bottomAnchor, constant: -16),
+
+            documentView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            documentView.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            documentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+        ])
+
+        for subview in stack.arrangedSubviews {
+            if subview is NSTextField || subview is NSButton { continue }
+            subview.leadingAnchor.constraint(equalTo: stack.leadingAnchor).isActive = true
+            subview.trailingAnchor.constraint(equalTo: stack.trailingAnchor).isActive = true
+        }
+    }
+
+    // MARK: - Settings Dropdown Data
+
+    private func buildQualityDropdownItems() -> [String] {
+        let appDelegate = NSApp.delegate as! AppDelegate
+        var items: [String] = CaptureQualityPreset.allCases.map(\.displayName)
+        for custom in appDelegate.customPresets {
+            items.append(custom.displayName)
+        }
+        return items
+    }
+
+    private func qualitySelectedIndex() -> Int {
+        let appDelegate = NSApp.delegate as! AppDelegate
+        if let customName = appDelegate.selectedCustomPresetName,
+           let idx = appDelegate.customPresets.firstIndex(where: { $0.name == customName }) {
+            return CaptureQualityPreset.allCases.count + idx
+        }
+        return CaptureQualityPreset.allCases.firstIndex(of: appDelegate.currentPreset) ?? 1
+    }
+
+    private func buildBufferDropdownItems() -> [String] {
+        let appDelegate = NSApp.delegate as! AppDelegate
+        var items = appDelegate.bufferSizePresets.map { "\($0) minutes" }
+        if !appDelegate.bufferSizePresets.contains(appDelegate.currentBufferMinutes) {
+            items.append("\(appDelegate.currentBufferMinutes) minutes")
+        }
+        return items
+    }
+
+    private func bufferSelectedIndex() -> Int {
+        let appDelegate = NSApp.delegate as! AppDelegate
+        if let idx = appDelegate.bufferSizePresets.firstIndex(of: appDelegate.currentBufferMinutes) {
+            return idx
+        }
+        return appDelegate.bufferSizePresets.count
+    }
+
+    private func buildClipLengthDropdownItems() -> [String] {
+        let appDelegate = NSApp.delegate as! AppDelegate
+        return appDelegate.clipLengthPresets.map { appDelegate.formatDuration($0) }
+    }
+
+    private func clipLengthSelectedIndex() -> Int {
+        let appDelegate = NSApp.delegate as! AppDelegate
+        return appDelegate.clipLengthPresets.firstIndex(of: appDelegate.currentClipLength) ?? 2
+    }
+
+    private func updateClipLengthEnabledStates() {
+        let appDelegate = NSApp.delegate as! AppDelegate
+        let bufferSeconds = appDelegate.currentBufferMinutes * 60
+        guard let menu = clipLengthPopup?.menu else { return }
+        for (i, seconds) in appDelegate.clipLengthPresets.enumerated() where i < menu.items.count {
+            menu.items[i].isEnabled = seconds <= bufferSeconds
+        }
+    }
+
+    private func refreshSettingsControls() {
+        qualityPopup?.removeAllItems()
+        for title in buildQualityDropdownItems() { qualityPopup?.addItem(withTitle: title) }
+        qualityPopup?.selectItem(at: qualitySelectedIndex())
+
+        bufferPopup?.removeAllItems()
+        for title in buildBufferDropdownItems() { bufferPopup?.addItem(withTitle: title) }
+        bufferPopup?.selectItem(at: bufferSelectedIndex())
+
+        clipLengthPopup?.removeAllItems()
+        for title in buildClipLengthDropdownItems() { clipLengthPopup?.addItem(withTitle: title) }
+        clipLengthPopup?.selectItem(at: clipLengthSelectedIndex())
+        updateClipLengthEnabledStates()
+
+        updateStorageInfo()
+    }
+
+    private func updateStorageInfo() {
+        let totalBytes = library.clips.reduce(Int64(0)) { $0 + $1.fileSize }
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        storageInfoLabel?.stringValue = "\(formatter.string(fromByteCount: totalBytes)) \u{00B7} \(library.clips.count) clip\(library.clips.count == 1 ? "" : "s")"
+    }
+
+    // MARK: - Settings Actions
+
+    @objc private func settingsQualityChanged() {
+        let appDelegate = NSApp.delegate as! AppDelegate
+        let idx = qualityPopup.indexOfSelectedItem
+        let builtInCount = CaptureQualityPreset.allCases.count
+
+        if idx < builtInCount {
+            let preset = CaptureQualityPreset.allCases[idx]
+            guard preset != appDelegate.currentPreset || appDelegate.selectedCustomPresetName != nil else { return }
+            guard appDelegate.offerBufferSave(presetName: preset.displayName) else {
+                qualityPopup.selectItem(at: qualitySelectedIndex())
+                return
+            }
+            appDelegate.currentPreset = preset
+            appDelegate.selectedCustomPresetName = nil
+        } else {
+            let customIdx = idx - builtInCount
+            guard customIdx < appDelegate.customPresets.count else { return }
+            let custom = appDelegate.customPresets[customIdx]
+            guard appDelegate.selectedCustomPresetName != custom.name else { return }
+            guard appDelegate.offerBufferSave(presetName: custom.displayName) else {
+                qualityPopup.selectItem(at: qualitySelectedIndex())
+                return
+            }
+            appDelegate.selectedCustomPresetName = custom.name
+        }
+
+        appDelegate.saveSettings()
+        appDelegate.rebuildMenu()
+        appDelegate.restartCapture()
+    }
+
+    @objc private func settingsBufferChanged() {
+        let appDelegate = NSApp.delegate as! AppDelegate
+        let idx = bufferPopup.indexOfSelectedItem
+        let minutes: Int
+        if idx < appDelegate.bufferSizePresets.count {
+            minutes = appDelegate.bufferSizePresets[idx]
+        } else {
+            minutes = appDelegate.currentBufferMinutes
+        }
+        guard minutes != appDelegate.currentBufferMinutes else { return }
+        appDelegate.applyBufferSize(minutes)
+        refreshSettingsControls()
+    }
+
+    @objc private func settingsClipLengthChanged() {
+        let appDelegate = NSApp.delegate as! AppDelegate
+        let idx = clipLengthPopup.indexOfSelectedItem
+        guard idx < appDelegate.clipLengthPresets.count else { return }
+        let seconds = appDelegate.clipLengthPresets[idx]
+        appDelegate.currentClipLength = seconds
+        appDelegate.saveSettings()
+        appDelegate.rebuildMenu()
+    }
+
+    @objc private func settingsAutoStartChanged(_ sender: NSSwitch) {
+        let appDelegate = NSApp.delegate as! AppDelegate
+        appDelegate.autoStartCapture = sender.state == .on
+        appDelegate.saveSettings()
+    }
+
+    @objc private func settingsOpenLibraryChanged(_ sender: NSSwitch) {
+        let appDelegate = NSApp.delegate as! AppDelegate
+        appDelegate.openLibraryOnSave = sender.state == .on
+        appDelegate.saveSettings()
+    }
+
+    @objc private func settingsNotifyChanged(_ sender: NSSwitch) {
+        let appDelegate = NSApp.delegate as! AppDelegate
+        appDelegate.notifyOnSave = sender.state == .on
+        appDelegate.saveSettings()
+    }
+
+    @objc private func settingsLaunchAtLoginChanged(_ sender: NSSwitch) {
+        let appDelegate = NSApp.delegate as! AppDelegate
+        let enabled = sender.state == .on
+        appDelegate.launchAtLogin = enabled
+        appDelegate.saveSettings()
+        if #available(macOS 13.0, *) {
+            do {
+                if enabled {
+                    try SMAppService.mainApp.register()
+                } else {
+                    try SMAppService.mainApp.unregister()
+                }
+            } catch {
+                print("SMAppService error: \(error)")
+            }
+        }
+    }
+
+    @objc private func settingsResetWarnings() {
+        let alert = NSAlert()
+        alert.messageText = "Reset Warning Dialogs"
+        alert.informativeText = "All warning dialogs will be shown again."
+        alert.addButton(withTitle: "Reset")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let appDelegate = NSApp.delegate as! AppDelegate
+        appDelegate.resetWarningDialogs()
+    }
+
+    @objc private func settingsResetAll() {
+        let alert = NSAlert()
+        alert.messageText = "Reset All Settings?"
+        alert.informativeText = "This resets all settings to default. Your clips and playlists are kept. Continue?"
+        alert.addButton(withTitle: "Reset")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let appDelegate = NSApp.delegate as! AppDelegate
+        appDelegate.resetAllSettings()
+        refreshSettingsControls()
+    }
+
+    @objc private func settingsOpenGitHub() {
+        NSWorkspace.shared.open(URL(string: "https://github.com/ITLLEXPLODE/MetalClip")!)
     }
 
     // MARK: - Main Area Switching
@@ -1082,7 +1520,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         case .playlists:
             target = isShowingPlaylistDetail ? playlistDetailView : playlistsListView
         case .settings:
-            target = placeholderViews[item]!
+            target = settingsView
         }
 
         mainContainer.addSubview(target)
@@ -1117,6 +1555,10 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
                     self.playlistCollectionView?.reloadData()
                 }
             }
+        }
+
+        if item == .settings {
+            refreshSettingsControls()
         }
     }
 

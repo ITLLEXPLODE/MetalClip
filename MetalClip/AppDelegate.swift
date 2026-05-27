@@ -106,6 +106,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var lowPowerPopupWindow: NSWindow?
     var currentBufferMinutes: Int = 30
     var skipShrinkWarning: Bool = false
+    var autoStartCapture: Bool = true
+    var openLibraryOnSave: Bool = true
+    var notifyOnSave: Bool = false
+    var launchAtLogin: Bool = false
+    var clipSavePopupWindow: NSWindow?
 
     let saveClipHotKey = HotKey(
         keyCode: 18,
@@ -148,7 +153,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupHotKeys()
         setupCustomClipWindow()
         setupCustomPresetWindow()
-        startScreenCapture()
+        if autoStartCapture {
+            startScreenCapture()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -166,7 +173,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             "captureQuality": CaptureQualityPreset.balanced.rawValue,
             "microphone": "Off",
             "bufferMinutes": 30,
-            "skipShrinkWarning": false
+            "skipShrinkWarning": false,
+            "autoStartCapture": true,
+            "openLibraryOnSave": true,
+            "notifyOnSave": false,
+            "launchAtLogin": false
         ])
         currentClipLength = defaults.integer(forKey: "clipLength")
         currentPreset = CaptureQualityPreset(rawValue: defaults.string(forKey: "captureQuality") ?? "") ?? .balanced
@@ -175,6 +186,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         currentBufferMinutes = defaults.integer(forKey: "bufferMinutes")
         if currentBufferMinutes <= 0 { currentBufferMinutes = 30 }
         skipShrinkWarning = defaults.bool(forKey: "skipShrinkWarning")
+        autoStartCapture = defaults.bool(forKey: "autoStartCapture")
+        openLibraryOnSave = defaults.bool(forKey: "openLibraryOnSave")
+        notifyOnSave = defaults.bool(forKey: "notifyOnSave")
+        launchAtLogin = defaults.bool(forKey: "launchAtLogin")
         if let data = defaults.data(forKey: "customPresets"),
            let decoded = try? JSONDecoder().decode([CustomPreset].self, from: data) {
             customPresets = decoded
@@ -189,9 +204,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         defaults.set(selectedCustomPresetName, forKey: "selectedCustomPreset")
         defaults.set(currentBufferMinutes, forKey: "bufferMinutes")
         defaults.set(skipShrinkWarning, forKey: "skipShrinkWarning")
+        defaults.set(autoStartCapture, forKey: "autoStartCapture")
+        defaults.set(openLibraryOnSave, forKey: "openLibraryOnSave")
+        defaults.set(notifyOnSave, forKey: "notifyOnSave")
+        defaults.set(launchAtLogin, forKey: "launchAtLogin")
         if let data = try? JSONEncoder().encode(customPresets) {
             defaults.set(data, forKey: "customPresets")
         }
+    }
+
+    func resetWarningDialogs() {
+        skipShrinkWarning = false
+        saveSettings()
+    }
+
+    func resetAllSettings() {
+        currentClipLength = 120
+        currentPreset = .balanced
+        selectedCustomPresetName = nil
+        currentMicrophone = "Off"
+        currentBufferMinutes = 30
+        skipShrinkWarning = false
+        autoStartCapture = true
+        openLibraryOnSave = true
+        notifyOnSave = false
+        launchAtLogin = false
+        customPresets = []
+        saveSettings()
+        rebuildMenu()
+        restartCapture()
     }
 
     // MARK: - Capture
@@ -508,7 +549,66 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showInLibrary(url: URL) {
         clipLibrary.refresh()
-        clipLibraryWindow.showWindow(selectingFilename: url.lastPathComponent)
+        if openLibraryOnSave {
+            clipLibraryWindow.showWindow(selectingFilename: url.lastPathComponent)
+        }
+        if notifyOnSave {
+            showClipSavedPopup(filename: url.lastPathComponent)
+        }
+    }
+
+    func showClipSavedPopup(filename: String) {
+        clipSavePopupWindow?.orderOut(nil)
+
+        let width: CGFloat = 340
+        let height: CGFloat = 50
+        let screen = NSScreen.main
+        let origin = NSPoint(
+            x: (screen?.frame.midX ?? 500) - width / 2,
+            y: (screen?.frame.maxY ?? 500) - height - 60
+        )
+
+        let popup = NSWindow(
+            contentRect: NSRect(origin: origin, size: NSSize(width: width, height: height)),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        popup.isOpaque = false
+        popup.backgroundColor = NSColor.black.withAlphaComponent(0.85)
+        popup.level = .floating
+        popup.sharingType = .none
+        popup.collectionBehavior = [.canJoinAllSpaces, .stationary]
+        popup.ignoresMouseEvents = true
+        popup.hasShadow = true
+
+        let content = NSView()
+        content.wantsLayer = true
+        content.layer?.cornerRadius = 10
+        popup.contentView = content
+
+        let label = NSTextField(labelWithString: "Clip saved — \(filename)")
+        label.textColor = .white
+        label.font = .systemFont(ofSize: 13, weight: .medium)
+        label.alignment = .center
+        label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(label)
+
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+            label.leadingAnchor.constraint(greaterThanOrEqualTo: content.leadingAnchor, constant: 16),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -16),
+        ])
+
+        popup.orderFront(nil)
+        clipSavePopupWindow = popup
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.clipSavePopupWindow?.orderOut(nil)
+            self?.clipSavePopupWindow = nil
+        }
     }
 
     @objc func openLibraryAction() {
