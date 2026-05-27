@@ -21,6 +21,7 @@ class ClipLibrary {
         let id: UUID
         var name: String
         var clipIDs: [UUID]
+        var coverClipID: UUID? = nil
     }
 
     var thumbnailsDirectory: URL {
@@ -96,6 +97,9 @@ class ClipLibrary {
         clips.removeAll { $0.id == clip.id }
         for i in playlists.indices {
             playlists[i].clipIDs.removeAll { $0 == clip.id }
+            if playlists[i].coverClipID == clip.id {
+                playlists[i].coverClipID = nil
+            }
         }
         saveMetadataFile()
         savePlaylists()
@@ -143,7 +147,24 @@ class ClipLibrary {
     func removeClip(_ clip: ClipMetadata, fromPlaylist playlist: Playlist) {
         guard let idx = playlists.firstIndex(where: { $0.id == playlist.id }) else { return }
         playlists[idx].clipIDs.removeAll { $0 == clip.id }
+        if playlists[idx].coverClipID == clip.id {
+            playlists[idx].coverClipID = nil
+        }
         savePlaylists()
+    }
+
+    func setPlaylistCover(_ playlist: Playlist, clipID: UUID?) {
+        guard let idx = playlists.firstIndex(where: { $0.id == playlist.id }) else { return }
+        playlists[idx].coverClipID = clipID
+        savePlaylists()
+    }
+
+    func coverThumbnailPath(for playlist: Playlist) -> String? {
+        if let coverID = playlist.coverClipID,
+           let clip = clips.first(where: { $0.id == coverID }) {
+            return clip.thumbnailPath
+        }
+        return clips(in: playlist).first?.thumbnailPath
     }
 
     func clips(in playlist: Playlist) -> [ClipMetadata] {

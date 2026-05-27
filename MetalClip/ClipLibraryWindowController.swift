@@ -379,10 +379,13 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     private var playlistCollectionView: NSCollectionView!
     private var playlistScrollView: NSScrollView!
     private var playlistDetailView: NSView!
-    private var playlistDetailCollectionView: NSCollectionView!
+    private var playlistDetailTableView: NSTableView!
     private var playlistDetailScrollView: NSScrollView!
     private var playlistDetailBackButton: NSButton!
     private var playlistDetailTitle: NSTextField!
+    private var playlistDetailCoverView: NSImageView!
+    private var playlistDetailCountLabel: NSTextField!
+    private var playlistDetailSort: ClipLibrary.SortOrder = .newestFirst
 
     let library: ClipLibrary
 
@@ -471,7 +474,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         }
         if let idx = playlistDetailClips.firstIndex(where: { $0.id == clipID }) {
             playlistDetailClips[idx].thumbnailPath = libClip?.thumbnailPath
-            playlistDetailCollectionView?.reloadItems(at: [IndexPath(item: idx, section: 0)])
+            playlistDetailTableView?.reloadData(forRowIndexes: IndexSet(integer: idx), columnIndexes: IndexSet(integer: 0))
         }
     }
 
@@ -877,9 +880,62 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
             playlistScrollView.bottomAnchor.constraint(equalTo: playlistsListView.bottomAnchor),
         ])
 
-        // Detail view (clips in a playlist)
+        // Detail view (YouTube-style: left panel + right clip list)
         playlistDetailView = NSView()
         playlistDetailView.translatesAutoresizingMaskIntoConstraints = false
+
+        // --- Left Panel ---
+        let leftPanel = NSView()
+        leftPanel.translatesAutoresizingMaskIntoConstraints = false
+        playlistDetailView.addSubview(leftPanel)
+
+        playlistDetailCoverView = NSImageView()
+        playlistDetailCoverView.translatesAutoresizingMaskIntoConstraints = false
+        playlistDetailCoverView.wantsLayer = true
+        playlistDetailCoverView.layer?.cornerRadius = 8
+        playlistDetailCoverView.layer?.masksToBounds = true
+        playlistDetailCoverView.layer?.backgroundColor = NSColor.quaternaryLabelColor.cgColor
+        playlistDetailCoverView.imageScaling = .scaleProportionallyUpOrDown
+        playlistDetailCoverView.imageAlignment = .alignCenter
+        leftPanel.addSubview(playlistDetailCoverView)
+
+        playlistDetailTitle = NSTextField(labelWithString: "")
+        playlistDetailTitle.translatesAutoresizingMaskIntoConstraints = false
+        playlistDetailTitle.font = .systemFont(ofSize: 18, weight: .bold)
+        playlistDetailTitle.lineBreakMode = .byTruncatingTail
+        playlistDetailTitle.maximumNumberOfLines = 2
+        leftPanel.addSubview(playlistDetailTitle)
+
+        playlistDetailCountLabel = NSTextField(labelWithString: "")
+        playlistDetailCountLabel.translatesAutoresizingMaskIntoConstraints = false
+        playlistDetailCountLabel.font = .systemFont(ofSize: 12)
+        playlistDetailCountLabel.textColor = .secondaryLabelColor
+        leftPanel.addSubview(playlistDetailCountLabel)
+
+        let playAllButton = NSButton(title: "▶ Play All", target: self, action: #selector(playlistDetailPlayAll))
+        playAllButton.translatesAutoresizingMaskIntoConstraints = false
+        playAllButton.bezelStyle = .rounded
+        playAllButton.controlSize = .large
+        leftPanel.addSubview(playAllButton)
+
+        let actionRow = NSStackView()
+        actionRow.translatesAutoresizingMaskIntoConstraints = false
+        actionRow.orientation = .horizontal
+        actionRow.spacing = 8
+
+        let renameBtn = NSButton(image: NSImage(systemSymbolName: "pencil", accessibilityDescription: "Rename")!, target: self, action: #selector(playlistDetailRenameAction))
+        renameBtn.bezelStyle = .rounded
+        renameBtn.isBordered = false
+        renameBtn.toolTip = "Rename Playlist"
+        actionRow.addArrangedSubview(renameBtn)
+
+        let deleteBtn = NSButton(image: NSImage(systemSymbolName: "trash", accessibilityDescription: "Delete")!, target: self, action: #selector(playlistDetailDeleteAction))
+        deleteBtn.bezelStyle = .rounded
+        deleteBtn.isBordered = false
+        deleteBtn.toolTip = "Delete Playlist"
+        actionRow.addArrangedSubview(deleteBtn)
+
+        leftPanel.addSubview(actionRow)
 
         playlistDetailBackButton = NSButton(title: "\u{2190} Back", target: self, action: #selector(backToPlaylistList))
         playlistDetailBackButton.translatesAutoresizingMaskIntoConstraints = false
@@ -887,31 +943,72 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         playlistDetailBackButton.isBordered = false
         playlistDetailBackButton.font = .systemFont(ofSize: 13)
         playlistDetailBackButton.contentTintColor = .controlAccentColor
-        playlistDetailView.addSubview(playlistDetailBackButton)
+        leftPanel.addSubview(playlistDetailBackButton)
 
-        playlistDetailTitle = NSTextField(labelWithString: "")
-        playlistDetailTitle.translatesAutoresizingMaskIntoConstraints = false
-        playlistDetailTitle.font = .systemFont(ofSize: 14, weight: .semibold)
-        playlistDetailTitle.lineBreakMode = .byTruncatingTail
-        playlistDetailView.addSubview(playlistDetailTitle)
+        NSLayoutConstraint.activate([
+            leftPanel.leadingAnchor.constraint(equalTo: playlistDetailView.leadingAnchor),
+            leftPanel.topAnchor.constraint(equalTo: playlistDetailView.topAnchor),
+            leftPanel.bottomAnchor.constraint(equalTo: playlistDetailView.bottomAnchor),
+            leftPanel.widthAnchor.constraint(equalToConstant: 280),
 
-        let detailLayout = NSCollectionViewFlowLayout()
-        detailLayout.minimumInteritemSpacing = 12
-        detailLayout.minimumLineSpacing = 16
-        detailLayout.sectionInset = NSEdgeInsets(top: 8, left: 12, bottom: 12, right: 12)
+            playlistDetailCoverView.leadingAnchor.constraint(equalTo: leftPanel.leadingAnchor, constant: 16),
+            playlistDetailCoverView.trailingAnchor.constraint(equalTo: leftPanel.trailingAnchor, constant: -16),
+            playlistDetailCoverView.topAnchor.constraint(equalTo: leftPanel.topAnchor, constant: 16),
+            playlistDetailCoverView.heightAnchor.constraint(equalTo: playlistDetailCoverView.widthAnchor, multiplier: 9.0 / 16.0),
 
-        playlistDetailCollectionView = NSCollectionView()
-        playlistDetailCollectionView.collectionViewLayout = detailLayout
-        playlistDetailCollectionView.isSelectable = true
-        playlistDetailCollectionView.allowsMultipleSelection = false
-        playlistDetailCollectionView.dataSource = self
-        playlistDetailCollectionView.delegate = self
-        playlistDetailCollectionView.register(ClipCardItem.self, forItemWithIdentifier: ClipCardItem.identifier)
-        playlistDetailCollectionView.backgroundColors = [.clear]
+            playlistDetailTitle.leadingAnchor.constraint(equalTo: leftPanel.leadingAnchor, constant: 16),
+            playlistDetailTitle.trailingAnchor.constraint(equalTo: leftPanel.trailingAnchor, constant: -16),
+            playlistDetailTitle.topAnchor.constraint(equalTo: playlistDetailCoverView.bottomAnchor, constant: 12),
+
+            playlistDetailCountLabel.leadingAnchor.constraint(equalTo: leftPanel.leadingAnchor, constant: 16),
+            playlistDetailCountLabel.topAnchor.constraint(equalTo: playlistDetailTitle.bottomAnchor, constant: 4),
+
+            playAllButton.leadingAnchor.constraint(equalTo: leftPanel.leadingAnchor, constant: 16),
+            playAllButton.trailingAnchor.constraint(equalTo: leftPanel.trailingAnchor, constant: -16),
+            playAllButton.topAnchor.constraint(equalTo: playlistDetailCountLabel.bottomAnchor, constant: 12),
+
+            actionRow.leadingAnchor.constraint(equalTo: leftPanel.leadingAnchor, constant: 16),
+            actionRow.topAnchor.constraint(equalTo: playAllButton.bottomAnchor, constant: 12),
+
+            playlistDetailBackButton.leadingAnchor.constraint(equalTo: leftPanel.leadingAnchor, constant: 16),
+            playlistDetailBackButton.bottomAnchor.constraint(equalTo: leftPanel.bottomAnchor, constant: -12),
+        ])
+
+        // --- Right Panel (sort + table view) ---
+        let rightPanel = NSView()
+        rightPanel.translatesAutoresizingMaskIntoConstraints = false
+        playlistDetailView.addSubview(rightPanel)
+
+        let detailSortPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        detailSortPopup.translatesAutoresizingMaskIntoConstraints = false
+        detailSortPopup.controlSize = .small
+        detailSortPopup.font = .systemFont(ofSize: 11)
+        for order in ClipLibrary.SortOrder.allCases {
+            detailSortPopup.addItem(withTitle: order.title)
+        }
+        detailSortPopup.target = self
+        detailSortPopup.action = #selector(playlistDetailSortChanged(_:))
+        rightPanel.addSubview(detailSortPopup)
+
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("clip"))
+        column.title = ""
+
+        playlistDetailTableView = NSTableView()
+        playlistDetailTableView.addTableColumn(column)
+        playlistDetailTableView.headerView = nil
+        playlistDetailTableView.rowHeight = 76
+        playlistDetailTableView.style = .plain
+        playlistDetailTableView.dataSource = self
+        playlistDetailTableView.delegate = self
+        playlistDetailTableView.target = self
+        playlistDetailTableView.doubleAction = #selector(playlistDetailRowDoubleClicked)
+        playlistDetailTableView.selectionHighlightStyle = .regular
+        playlistDetailTableView.usesAlternatingRowBackgroundColors = false
 
         let detailMenu = NSMenu()
         detailMenu.delegate = self
         detailMenu.addItem(NSMenuItem(title: "Remove from Playlist", action: #selector(contextRemoveFromPlaylist), keyEquivalent: ""))
+        detailMenu.addItem(NSMenuItem(title: "Set as Playlist Cover", action: #selector(contextSetAsPlaylistCover), keyEquivalent: ""))
         detailMenu.addItem(NSMenuItem.separator())
         detailMenu.addItem(NSMenuItem(title: "Add to Favorites", action: #selector(contextToggleFavorite), keyEquivalent: ""))
         let detailAddItem = NSMenuItem(title: "Add to Playlist", action: nil, keyEquivalent: "")
@@ -924,30 +1021,28 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         detailMenu.addItem(NSMenuItem.separator())
         detailMenu.addItem(NSMenuItem(title: "Show in Finder", action: #selector(contextShowInFinder), keyEquivalent: ""))
         for item in detailMenu.items { item.target = self }
-        playlistDetailCollectionView.menu = detailMenu
+        playlistDetailTableView.menu = detailMenu
 
         playlistDetailScrollView = NSScrollView()
         playlistDetailScrollView.translatesAutoresizingMaskIntoConstraints = false
         playlistDetailScrollView.hasVerticalScroller = true
         playlistDetailScrollView.autohidesScrollers = true
-        playlistDetailScrollView.documentView = playlistDetailCollectionView
-        playlistDetailView.addSubview(playlistDetailScrollView)
-
-        NotificationCenter.default.addObserver(self, selector: #selector(playlistDetailGridFrameChanged), name: NSView.frameDidChangeNotification, object: playlistDetailScrollView)
-        playlistDetailScrollView.postsFrameChangedNotifications = true
+        playlistDetailScrollView.documentView = playlistDetailTableView
+        rightPanel.addSubview(playlistDetailScrollView)
 
         NSLayoutConstraint.activate([
-            playlistDetailBackButton.leadingAnchor.constraint(equalTo: playlistDetailView.leadingAnchor, constant: 12),
-            playlistDetailBackButton.topAnchor.constraint(equalTo: playlistDetailView.topAnchor, constant: 8),
+            rightPanel.leadingAnchor.constraint(equalTo: leftPanel.trailingAnchor),
+            rightPanel.trailingAnchor.constraint(equalTo: playlistDetailView.trailingAnchor),
+            rightPanel.topAnchor.constraint(equalTo: playlistDetailView.topAnchor),
+            rightPanel.bottomAnchor.constraint(equalTo: playlistDetailView.bottomAnchor),
 
-            playlistDetailTitle.leadingAnchor.constraint(equalTo: playlistDetailBackButton.trailingAnchor, constant: 8),
-            playlistDetailTitle.centerYAnchor.constraint(equalTo: playlistDetailBackButton.centerYAnchor),
-            playlistDetailTitle.trailingAnchor.constraint(equalTo: playlistDetailView.trailingAnchor, constant: -12),
+            detailSortPopup.trailingAnchor.constraint(equalTo: rightPanel.trailingAnchor, constant: -12),
+            detailSortPopup.topAnchor.constraint(equalTo: rightPanel.topAnchor, constant: 12),
 
-            playlistDetailScrollView.leadingAnchor.constraint(equalTo: playlistDetailView.leadingAnchor),
-            playlistDetailScrollView.trailingAnchor.constraint(equalTo: playlistDetailView.trailingAnchor),
-            playlistDetailScrollView.topAnchor.constraint(equalTo: playlistDetailBackButton.bottomAnchor, constant: 6),
-            playlistDetailScrollView.bottomAnchor.constraint(equalTo: playlistDetailView.bottomAnchor),
+            playlistDetailScrollView.leadingAnchor.constraint(equalTo: rightPanel.leadingAnchor),
+            playlistDetailScrollView.trailingAnchor.constraint(equalTo: rightPanel.trailingAnchor),
+            playlistDetailScrollView.topAnchor.constraint(equalTo: detailSortPopup.bottomAnchor, constant: 8),
+            playlistDetailScrollView.bottomAnchor.constraint(equalTo: rightPanel.bottomAnchor),
         ])
     }
 
@@ -966,19 +1061,56 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         flowLayout.itemSize = NSSize(width: itemWidth, height: PlaylistCardItem.cardHeight(for: itemWidth))
     }
 
-    @objc private func playlistDetailGridFrameChanged() {
-        updatePlaylistDetailFlowLayoutItemSize()
+    @objc private func playlistDetailSortChanged(_ sender: NSPopUpButton) {
+        guard let order = ClipLibrary.SortOrder(rawValue: sender.indexOfSelectedItem) else { return }
+        playlistDetailSort = order
+        reloadPlaylistDetail()
     }
 
-    private func updatePlaylistDetailFlowLayoutItemSize() {
-        guard let flowLayout = playlistDetailCollectionView?.collectionViewLayout as? NSCollectionViewFlowLayout else { return }
-        let availableWidth = playlistDetailScrollView.contentView.bounds.width - flowLayout.sectionInset.left - flowLayout.sectionInset.right
-        guard availableWidth > 0 else { return }
-        let minWidth: CGFloat = 240
-        let spacing = flowLayout.minimumInteritemSpacing
-        let columns = min(3, max(1, floor(availableWidth / minWidth)))
-        let itemWidth = floor((availableWidth - (columns - 1) * spacing) / columns)
-        flowLayout.itemSize = NSSize(width: itemWidth, height: ClipCardItem.cardHeight(for: itemWidth))
+    @objc private func playlistDetailPlayAll() {
+        // FUTURE: Stage R-3 — sequential playback
+        guard let first = playlistDetailClips.first else { return }
+        openClipInPlayer(first)
+    }
+
+    @objc private func playlistDetailRenameAction() {
+        guard let playlist = activePlaylist else { return }
+        let alert = NSAlert()
+        alert.messageText = "Rename Playlist"
+        alert.informativeText = "Enter a new name:"
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 250, height: 24))
+        field.stringValue = playlist.name
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = field.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        library.renamePlaylist(playlist, to: name)
+        activePlaylist = library.playlists.first(where: { $0.id == playlist.id })
+        playlistDetailTitle.stringValue = name
+    }
+
+    @objc private func playlistDetailDeleteAction() {
+        guard let playlist = activePlaylist else { return }
+        let alert = NSAlert()
+        alert.messageText = "Delete Playlist?"
+        alert.informativeText = "This removes the playlist \"\(playlist.name)\". The clips themselves are not deleted."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        library.deletePlaylist(playlist)
+        backToPlaylistList()
+    }
+
+    @objc private func playlistDetailRowDoubleClicked() {
+        let row = playlistDetailTableView.clickedRow
+        guard row >= 0, row < playlistDetailClips.count else { return }
+        openClipInPlayer(playlistDetailClips[row])
     }
 
     // MARK: - Player View
@@ -1618,9 +1750,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         if item == .playlists {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                if self.isShowingPlaylistDetail {
-                    self.updatePlaylistDetailFlowLayoutItemSize()
-                } else {
+                if !self.isShowingPlaylistDetail {
                     self.updatePlaylistFlowLayoutItemSize()
                     self.playlistCollectionView?.reloadData()
                 }
@@ -1666,7 +1796,6 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
 
     func collectionView(_ collectionView: NSCollectionView, numberOfItemsInSection section: Int) -> Int {
         if collectionView == playlistCollectionView { return library.playlists.count }
-        if collectionView == playlistDetailCollectionView { return playlistDetailClips.count }
         if collectionView == searchCollectionView { return searchResults.count }
         return flatList.count
     }
@@ -1677,7 +1806,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
             if indexPath.item < library.playlists.count {
                 let playlist = library.playlists[indexPath.item]
                 let clips = library.clips(in: playlist)
-                item.configure(name: playlist.name, clipCount: clips.count, coverThumbnailPath: clips.first?.thumbnailPath)
+                item.configure(name: playlist.name, clipCount: clips.count, coverThumbnailPath: library.coverThumbnailPath(for: playlist))
             }
             return item
         }
@@ -1685,7 +1814,6 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         let item = collectionView.makeItem(withIdentifier: ClipCardItem.identifier, for: indexPath) as! ClipCardItem
         let list: [ClipMetadata]
         if collectionView == searchCollectionView { list = searchResults }
-        else if collectionView == playlistDetailCollectionView { list = playlistDetailClips }
         else { list = flatList }
 
         if indexPath.item < list.count {
@@ -1722,26 +1850,30 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
 
         let list: [ClipMetadata]
         if collectionView == searchCollectionView { list = searchResults }
-        else if collectionView == playlistDetailCollectionView { list = playlistDetailClips }
         else { list = flatList }
         guard indexPath.item < list.count else { return }
         openClipInPlayer(list[indexPath.item])
     }
 
-    // MARK: - NSTableViewDataSource (nav only)
+    // MARK: - NSTableViewDataSource
 
     func numberOfRows(in tableView: NSTableView) -> Int {
-        NavItem.allCases.count
+        if tableView == playlistDetailTableView { return playlistDetailClips.count }
+        return NavItem.allCases.count
     }
 
-    // MARK: - NSTableViewDelegate (nav only)
+    // MARK: - NSTableViewDelegate
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        navCell(for: row)
+        if tableView == playlistDetailTableView {
+            return playlistDetailCell(for: row)
+        }
+        return navCell(for: row)
     }
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        28
+        if tableView == playlistDetailTableView { return 76 }
+        return 28
     }
 
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
@@ -1779,6 +1911,92 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         ])
 
         return cell
+    }
+
+    // MARK: - Playlist Detail Cells
+
+    private func playlistDetailCell(for row: Int) -> NSView {
+        guard row < playlistDetailClips.count else { return NSView() }
+        let clip = playlistDetailClips[row]
+
+        let cell = NSView()
+
+        let handle = NSTextField(labelWithString: "☰")
+        handle.translatesAutoresizingMaskIntoConstraints = false
+        handle.font = .systemFont(ofSize: 14)
+        handle.textColor = .tertiaryLabelColor
+        handle.toolTip = "Drag to reorder (coming soon)"
+        cell.addSubview(handle)
+
+        let thumbView = NSView()
+        thumbView.translatesAutoresizingMaskIntoConstraints = false
+        thumbView.wantsLayer = true
+        thumbView.layer?.cornerRadius = 4
+        thumbView.layer?.masksToBounds = true
+        thumbView.layer?.backgroundColor = NSColor.quaternaryLabelColor.cgColor
+        thumbView.layer?.contentsGravity = .resizeAspectFill
+        if let path = clip.thumbnailPath, let image = NSImage(contentsOfFile: path) {
+            thumbView.layer?.contents = image
+        }
+        cell.addSubview(thumbView)
+
+        let durationBadge = NSTextField(labelWithString: formatDuration(clip.duration))
+        durationBadge.translatesAutoresizingMaskIntoConstraints = false
+        durationBadge.font = .monospacedDigitSystemFont(ofSize: 9, weight: .medium)
+        durationBadge.textColor = .white
+        durationBadge.wantsLayer = true
+        durationBadge.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.7).cgColor
+        durationBadge.layer?.cornerRadius = 2
+        durationBadge.alignment = .center
+        thumbView.addSubview(durationBadge)
+
+        let baseName = (clip.filename as NSString).deletingPathExtension
+        let nameLabel = NSTextField(labelWithString: baseName)
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        nameLabel.lineBreakMode = .byTruncatingTail
+        nameLabel.maximumNumberOfLines = 1
+        cell.addSubview(nameLabel)
+
+        let sizeStr = ByteCountFormatter.string(fromByteCount: clip.fileSize, countStyle: .file)
+        let detailStr = [clip.resolution, sizeStr].filter { !$0.isEmpty }.joined(separator: " · ")
+        let detailLabel = NSTextField(labelWithString: detailStr)
+        detailLabel.translatesAutoresizingMaskIntoConstraints = false
+        detailLabel.font = .systemFont(ofSize: 10)
+        detailLabel.textColor = .secondaryLabelColor
+        detailLabel.lineBreakMode = .byTruncatingTail
+        cell.addSubview(detailLabel)
+
+        NSLayoutConstraint.activate([
+            handle.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+            handle.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            handle.widthAnchor.constraint(equalToConstant: 16),
+
+            thumbView.leadingAnchor.constraint(equalTo: handle.trailingAnchor, constant: 8),
+            thumbView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            thumbView.widthAnchor.constraint(equalToConstant: 120),
+            thumbView.heightAnchor.constraint(equalToConstant: 68),
+
+            durationBadge.trailingAnchor.constraint(equalTo: thumbView.trailingAnchor, constant: -4),
+            durationBadge.bottomAnchor.constraint(equalTo: thumbView.bottomAnchor, constant: -4),
+
+            nameLabel.leadingAnchor.constraint(equalTo: thumbView.trailingAnchor, constant: 10),
+            nameLabel.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -12),
+            nameLabel.topAnchor.constraint(equalTo: thumbView.topAnchor, constant: 8),
+
+            detailLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            detailLabel.trailingAnchor.constraint(equalTo: nameLabel.trailingAnchor),
+            detailLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 4),
+        ])
+
+        return cell
+    }
+
+    private func formatDuration(_ duration: TimeInterval) -> String {
+        let total = Int(duration)
+        let m = total / 60
+        let s = total % 60
+        return String(format: "%d:%02d", m, s)
     }
 
     // MARK: - Nav Selection
@@ -2201,12 +2419,13 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
             return
         }
 
-        // Determine which clip collection view this menu belongs to
+        // Determine which clip collection/table view this menu belongs to
         let clip: ClipMetadata?
-        if menu == searchCollectionView.menu {
+        if menu == playlistDetailTableView.menu {
+            let row = playlistDetailTableView.clickedRow
+            clip = (row >= 0 && row < playlistDetailClips.count) ? playlistDetailClips[row] : nil
+        } else if menu == searchCollectionView.menu {
             clip = clipAtClickPoint(in: searchCollectionView, from: searchResults)
-        } else if menu == playlistDetailCollectionView.menu {
-            clip = clipAtClickPoint(in: playlistDetailCollectionView, from: playlistDetailClips)
         } else {
             clip = clipAtClickPoint(in: clipCollectionView, from: flatList)
         }
@@ -2328,6 +2547,11 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         reloadPlaylistDetail()
     }
 
+    @objc private func contextSetAsPlaylistCover() {
+        guard let clip = contextMenuClip, let playlist = activePlaylist else { return }
+        library.setPlaylistCover(playlist, clipID: clip.id)
+    }
+
     @objc private func contextAddToPlaylist(_ sender: NSMenuItem) {
         guard let clip = contextMenuClip, let playlistID = sender.representedObject as? UUID else { return }
         guard let playlist = library.playlists.first(where: { $0.id == playlistID }) else { return }
@@ -2381,8 +2605,24 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
               let current = library.playlists.first(where: { $0.id == playlist.id }) else { return }
         activePlaylist = current
         playlistDetailTitle.stringValue = current.name
-        playlistDetailClips = library.clips(in: current)
-        playlistDetailCollectionView?.reloadData()
+
+        let clips = library.clips(in: current)
+        switch playlistDetailSort {
+        case .newestFirst: playlistDetailClips = clips.sorted { $0.dateCreated > $1.dateCreated }
+        case .oldestFirst: playlistDetailClips = clips.sorted { $0.dateCreated < $1.dateCreated }
+        case .longestFirst: playlistDetailClips = clips.sorted { $0.duration > $1.duration }
+        case .shortestFirst: playlistDetailClips = clips.sorted { $0.duration < $1.duration }
+        }
+
+        playlistDetailCountLabel?.stringValue = "\(playlistDetailClips.count) clip\(playlistDetailClips.count == 1 ? "" : "s")"
+
+        if let coverPath = library.coverThumbnailPath(for: current) {
+            playlistDetailCoverView?.image = NSImage(contentsOfFile: coverPath)
+        } else {
+            playlistDetailCoverView?.image = nil
+        }
+
+        playlistDetailTableView?.reloadData()
     }
 
     // MARK: - Rename / Delete
