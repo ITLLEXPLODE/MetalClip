@@ -14,8 +14,8 @@
             filePath = "MetalClip/ClipLibraryWindowController.swift"
             startingColumnNumber = "9223372036854775807"
             endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "1024"
-            endingLineNumber = "1024"
+            startingLineNumber = "1028"
+            endingLineNumber = "1028"
             landmarkName = "buildPlaylistsView()"
             landmarkType = "7">
          </BreakpointContent>

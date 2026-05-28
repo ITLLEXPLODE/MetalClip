@@ -385,7 +385,20 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     private var playlistDetailTitle: NSTextField!
     private var playlistDetailCoverView: NSImageView!
     private var playlistDetailCountLabel: NSTextField!
-    private var playlistDetailSort: ClipLibrary.SortOrder = .newestFirst
+
+    private enum PlaylistDetailSort: Int, CaseIterable {
+        case manual, newestFirst, oldestFirst, longestFirst, shortestFirst
+        var title: String {
+            switch self {
+            case .manual: return "Manual"
+            case .newestFirst: return "Newest First"
+            case .oldestFirst: return "Oldest First"
+            case .longestFirst: return "Longest First"
+            case .shortestFirst: return "Shortest First"
+            }
+        }
+    }
+    private var playlistDetailSort: PlaylistDetailSort = .manual
 
     let library: ClipLibrary
 
@@ -657,7 +670,9 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     }
 
     @objc private func gridFrameChanged() {
-        updateFlowLayoutItemSize()
+        DispatchQueue.main.async { [weak self] in
+            self?.updateFlowLayoutItemSize()
+        }
     }
 
     private func updateFlowLayoutItemSize() {
@@ -810,7 +825,9 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     }
 
     @objc private func searchGridFrameChanged() {
-        updateSearchFlowLayoutItemSize()
+        DispatchQueue.main.async { [weak self] in
+            self?.updateSearchFlowLayoutItemSize()
+        }
     }
 
     private func updateSearchFlowLayoutItemSize() {
@@ -983,7 +1000,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         detailSortPopup.translatesAutoresizingMaskIntoConstraints = false
         detailSortPopup.controlSize = .small
         detailSortPopup.font = .systemFont(ofSize: 11)
-        for order in ClipLibrary.SortOrder.allCases {
+        for order in PlaylistDetailSort.allCases {
             detailSortPopup.addItem(withTitle: order.title)
         }
         detailSortPopup.target = self
@@ -1004,6 +1021,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         playlistDetailTableView.doubleAction = #selector(playlistDetailRowDoubleClicked)
         playlistDetailTableView.selectionHighlightStyle = .regular
         playlistDetailTableView.usesAlternatingRowBackgroundColors = false
+        playlistDetailTableView.registerForDraggedTypes([.string])
 
         let detailMenu = NSMenu()
         detailMenu.delegate = self
@@ -1047,7 +1065,9 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     }
 
     @objc private func playlistGridFrameChanged() {
-        updatePlaylistFlowLayoutItemSize()
+        DispatchQueue.main.async { [weak self] in
+            self?.updatePlaylistFlowLayoutItemSize()
+        }
     }
 
     private func updatePlaylistFlowLayoutItemSize() {
@@ -1062,7 +1082,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     }
 
     @objc private func playlistDetailSortChanged(_ sender: NSPopUpButton) {
-        guard let order = ClipLibrary.SortOrder(rawValue: sender.indexOfSelectedItem) else { return }
+        guard let order = PlaylistDetailSort(rawValue: sender.indexOfSelectedItem) else { return }
         playlistDetailSort = order
         reloadPlaylistDetail()
     }
@@ -1880,6 +1900,39 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         true
     }
 
+    // MARK: - Playlist Detail Drag & Drop
+
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
+        guard tableView == playlistDetailTableView, playlistDetailSort == .manual else { return nil }
+        let item = NSPasteboardItem()
+        item.setString(String(row), forType: .string)
+        return item
+    }
+
+    func tableView(_ tableView: NSTableView, validateDrop info: any NSDraggingInfo, proposedRow row: Int, proposedDropOperation dropOperation: NSTableView.DropOperation) -> NSDragOperation {
+        guard tableView == playlistDetailTableView, playlistDetailSort == .manual, dropOperation == .above else { return [] }
+        return .move
+    }
+
+    func tableView(_ tableView: NSTableView, acceptDrop info: any NSDraggingInfo, row: Int, dropOperation: NSTableView.DropOperation) -> Bool {
+        guard tableView == playlistDetailTableView, playlistDetailSort == .manual,
+              let playlist = activePlaylist else { return false }
+
+        guard let item = info.draggingPasteboard.pasteboardItems?.first,
+              let rowStr = item.string(forType: .string),
+              let sourceRow = Int(rowStr) else { return false }
+
+        guard sourceRow >= 0, sourceRow < playlistDetailClips.count else { return false }
+
+        var ids = playlist.clipIDs
+        let movedID = ids.remove(at: sourceRow)
+        let destRow = sourceRow < row ? row - 1 : row
+        ids.insert(movedID, at: min(destRow, ids.count))
+        library.reorderClips(in: playlist, newOrder: ids)
+        reloadPlaylistDetail()
+        return true
+    }
+
     // MARK: - Nav Cells
 
     private func navCell(for row: Int) -> NSView {
@@ -1921,11 +1974,13 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
 
         let cell = NSView()
 
+        let isManual = playlistDetailSort == .manual
         let handle = NSTextField(labelWithString: "☰")
         handle.translatesAutoresizingMaskIntoConstraints = false
         handle.font = .systemFont(ofSize: 14)
-        handle.textColor = .tertiaryLabelColor
-        handle.toolTip = "Drag to reorder (coming soon)"
+        handle.textColor = isManual ? .tertiaryLabelColor : .separatorColor
+        handle.alphaValue = isManual ? 1.0 : 0.3
+        handle.toolTip = isManual ? "Drag to reorder" : nil
         cell.addSubview(handle)
 
         let thumbView = NSView()
@@ -2608,6 +2663,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
 
         let clips = library.clips(in: current)
         switch playlistDetailSort {
+        case .manual: playlistDetailClips = clips
         case .newestFirst: playlistDetailClips = clips.sorted { $0.dateCreated > $1.dateCreated }
         case .oldestFirst: playlistDetailClips = clips.sorted { $0.dateCreated < $1.dateCreated }
         case .longestFirst: playlistDetailClips = clips.sorted { $0.duration > $1.duration }
@@ -2622,6 +2678,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
             playlistDetailCoverView?.image = nil
         }
 
+        playlistDetailTableView?.draggingDestinationFeedbackStyle = playlistDetailSort == .manual ? .regular : .none
         playlistDetailTableView?.reloadData()
     }
 

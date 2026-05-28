@@ -153,6 +153,12 @@ class ClipLibrary {
         savePlaylists()
     }
 
+    func reorderClips(in playlist: Playlist, newOrder: [UUID]) {
+        guard let idx = playlists.firstIndex(where: { $0.id == playlist.id }) else { return }
+        playlists[idx].clipIDs = newOrder
+        savePlaylists()
+    }
+
     func setPlaylistCover(_ playlist: Playlist, clipID: UUID?) {
         guard let idx = playlists.firstIndex(where: { $0.id == playlist.id }) else { return }
         playlists[idx].coverClipID = clipID
@@ -410,7 +416,7 @@ class ClipLibrary {
 
     // MARK: - Helpers
 
-    private func buildMetadata(for url: URL) -> ClipMetadata {
+    private nonisolated func buildMetadata(for url: URL) -> ClipMetadata {
         let fm = FileManager.default
         let attrs = try? fm.attributesOfItem(atPath: url.path)
         let created = attrs?[.creationDate] as? Date ?? Date()
@@ -420,22 +426,16 @@ class ClipLibrary {
         var resolution = ""
 
         let asset = AVURLAsset(url: url)
-        let semaphore = DispatchSemaphore(value: 0)
-
-        Task.detached {
-            duration = (try? await asset.load(.duration).seconds) ?? 0
-            if let track = try? await asset.loadTracks(withMediaType: .video).first {
-                let sz = try? await track.load(.naturalSize)
-                let fps = try? await track.load(.nominalFrameRate)
-                if let sz, let fps {
-                    let h = Int(sz.height)
-                    let f = Int(round(fps))
-                    resolution = "\(h)p\(f)"
-                }
+        duration = asset.duration.seconds.isNaN ? 0 : asset.duration.seconds
+        if let track = asset.tracks(withMediaType: .video).first {
+            let sz = track.naturalSize
+            let fps = track.nominalFrameRate
+            let h = Int(sz.height)
+            let f = Int(round(fps))
+            if h > 0 && f > 0 {
+                resolution = "\(h)p\(f)"
             }
-            semaphore.signal()
         }
-        semaphore.wait()
 
         return ClipMetadata(
             id: UUID(),
