@@ -411,6 +411,10 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     private var isShowingPlayer = false
     private var pendingSelectFilename: String?
 
+    private var playbackQueue: [ClipMetadata] = []
+    private var playbackIndex: Int = 0
+    private var playbackEndObserver: NSObjectProtocol?
+
     private var searchText: String = ""
     private var selectedDateFilters: Set<ClipLibrary.DateFilter> = []
     private var selectedLengthFilters: Set<ClipLibrary.LengthFilter> = []
@@ -1095,9 +1099,8 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     }
 
     @objc private func playlistDetailPlayAll() {
-        // FUTURE: Stage R-3 — sequential playback
-        guard let first = playlistDetailClips.first else { return }
-        openClipInPlayer(first)
+        guard !playlistDetailClips.isEmpty else { return }
+        startContinuousPlay(from: 0, queue: playlistDetailClips)
     }
 
     @objc private func playlistDetailRenameAction() {
@@ -1176,7 +1179,63 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     @objc private func playlistDetailRowDoubleClicked() {
         let row = playlistDetailTableView.clickedRow
         guard row >= 0, row < playlistDetailClips.count else { return }
-        openClipInPlayer(playlistDetailClips[row])
+        startContinuousPlay(from: row, queue: playlistDetailClips)
+    }
+
+    // MARK: - Continuous Playback
+
+    private func startContinuousPlay(from index: Int, queue: [ClipMetadata]) {
+        stopContinuousPlay()
+        playbackQueue = queue
+        playbackIndex = index
+        let clip = playbackQueue[playbackIndex]
+        openClipInPlayer(clip)
+        observePlaybackEnd()
+    }
+
+    private func stopContinuousPlay() {
+        if let observer = playbackEndObserver {
+            NotificationCenter.default.removeObserver(observer)
+            playbackEndObserver = nil
+        }
+        playbackQueue = []
+        playbackIndex = 0
+    }
+
+    private func observePlaybackEnd() {
+        if let observer = playbackEndObserver {
+            NotificationCenter.default.removeObserver(observer)
+            playbackEndObserver = nil
+        }
+        guard let item = player?.currentItem else { return }
+        playbackEndObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: item,
+            queue: .main
+        ) { [weak self] _ in
+            self?.advanceToNextClip()
+        }
+    }
+
+    private func advanceToNextClip() {
+        let nextIndex = playbackIndex + 1
+        guard nextIndex < playbackQueue.count else { return }
+        playbackIndex = nextIndex
+        let clip = playbackQueue[playbackIndex]
+        let url = library.directory.appendingPathComponent(clip.filename)
+        let newItem = AVPlayerItem(url: url)
+
+        if let observer = playbackEndObserver {
+            NotificationCenter.default.removeObserver(observer)
+            playbackEndObserver = nil
+        }
+
+        activeClip = clip
+        player?.replaceCurrentItem(with: newItem)
+        player?.play()
+        updatePlayerInfo()
+
+        observePlaybackEnd()
     }
 
     // MARK: - Player View
