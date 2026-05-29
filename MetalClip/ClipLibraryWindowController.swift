@@ -952,6 +952,12 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         deleteBtn.toolTip = "Delete Playlist"
         actionRow.addArrangedSubview(deleteBtn)
 
+        let editCoverBtn = NSButton(image: NSImage(systemSymbolName: "photo", accessibilityDescription: "Edit Cover")!, target: self, action: #selector(playlistDetailEditCoverAction(_:)))
+        editCoverBtn.bezelStyle = .rounded
+        editCoverBtn.isBordered = false
+        editCoverBtn.toolTip = "Edit Cover"
+        actionRow.addArrangedSubview(editCoverBtn)
+
         leftPanel.addSubview(actionRow)
 
         playlistDetailBackButton = NSButton(title: "\u{2190} Back", target: self, action: #selector(backToPlaylistList))
@@ -1125,6 +1131,27 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         library.deletePlaylist(playlist)
         backToPlaylistList()
+    }
+
+    @objc private func playlistDetailEditCoverAction(_ sender: NSButton) {
+        guard activePlaylist != nil else { return }
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "Upload Image...", action: #selector(editCoverUploadImage), keyEquivalent: ""))
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Reset to Default", action: #selector(editCoverResetToDefault), keyEquivalent: ""))
+        for item in menu.items { item.target = self }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height), in: sender)
+    }
+
+    @objc private func editCoverUploadImage() {
+        print("📷 Upload Image - stub")
+    }
+
+    @objc private func editCoverResetToDefault() {
+        guard let playlist = activePlaylist else { return }
+        library.resetCover(playlist)
+        reloadPlaylistDetail()
+        playlistCollectionView?.reloadData()
     }
 
     @objc private func playlistDetailRowDoubleClicked() {

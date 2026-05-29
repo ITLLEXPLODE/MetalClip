@@ -14,10 +14,40 @@
             filePath = "MetalClip/ClipLibraryWindowController.swift"
             startingColumnNumber = "9223372036854775807"
             endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "1092"
-            endingLineNumber = "1092"
-            landmarkName = "playlistDetailPlayAll()"
+            startingLineNumber = "1098"
+            endingLineNumber = "1098"
+            landmarkName = "playlistDetailRenameAction()"
             landmarkType = "7">
+            <Locations>
+               <Location
+                  uuid = "65F07774-41EC-46BE-AE76-14D4780E8624 - 95401e9396e695a3"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "MetalClip.ClipLibraryWindowController.playlistDetailRenameAction() -&gt; ()"
+                  moduleName = "MetalClip.debug.dylib"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/inho/Desktop/MetalClip/MetalClip/MetalClip/ClipLibraryWindowController.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "1098"
+                  endingLineNumber = "1098">
+               </Location>
+               <Location
+                  uuid = "65F07774-41EC-46BE-AE76-14D4780E8624 - 357013cff011fa37"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "MetalClip.ClipLibraryWindowController.playlistDetailPlayAll() -&gt; ()"
+                  moduleName = "MetalClip.debug.dylib"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/inho/Desktop/MetalClip/MetalClip/MetalClip/ClipLibraryWindowController.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "1098"
+                  endingLineNumber = "1098">
+               </Location>
+            </Locations>
          </BreakpointContent>
       </BreakpointProxy>
    </Breakpoints>
