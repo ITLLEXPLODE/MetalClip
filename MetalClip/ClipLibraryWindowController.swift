@@ -1,6 +1,7 @@
 import Cocoa
 import AVKit
 import ServiceManagement
+import UniformTypeIdentifiers
 
 // MARK: - ClipCardItem
 
@@ -1144,7 +1145,25 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     }
 
     @objc private func editCoverUploadImage() {
-        print("📷 Upload Image - stub")
+        guard let playlist = activePlaylist else { return }
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [.jpeg, .png, .heic, .gif, .bmp]
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url, let self else { return }
+            do {
+                try self.library.setCustomCover(playlist, fromURL: url)
+                self.reloadPlaylistDetail()
+                self.playlistCollectionView?.reloadData()
+            } catch {
+                let alert = NSAlert()
+                alert.messageText = "Couldn't import that image."
+                alert.informativeText = error.localizedDescription
+                alert.runModal()
+            }
+        }
     }
 
     @objc private func editCoverResetToDefault() {
