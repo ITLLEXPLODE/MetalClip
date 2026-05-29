@@ -2605,6 +2605,8 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     @objc private func contextSetAsPlaylistCover() {
         guard let clip = contextMenuClip, let playlist = activePlaylist else { return }
         library.setPlaylistCover(playlist, clipID: clip.id)
+        reloadPlaylistDetail()
+        playlistCollectionView?.reloadData()
     }
 
     @objc private func contextAddToPlaylist(_ sender: NSMenuItem) {
