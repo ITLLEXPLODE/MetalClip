@@ -22,10 +22,15 @@ class ClipLibrary {
         var name: String
         var clipIDs: [UUID]
         var coverClipID: UUID? = nil
+        var customCoverPath: String? = nil
     }
 
     var thumbnailsDirectory: URL {
         directory.appendingPathComponent(".thumbnails")
+    }
+
+    var playlistCoversDirectory: URL {
+        directory.appendingPathComponent(".playlist-covers")
     }
 
     init(directory: URL) {
@@ -127,6 +132,9 @@ class ClipLibrary {
     }
 
     func deletePlaylist(_ playlist: Playlist) {
+        if let path = playlist.customCoverPath {
+            try? FileManager.default.removeItem(atPath: path)
+        }
         playlists.removeAll { $0.id == playlist.id }
         savePlaylists()
     }
@@ -165,7 +173,40 @@ class ClipLibrary {
         savePlaylists()
     }
 
+    func setCustomCover(_ playlist: Playlist, fromURL url: URL) throws {
+        guard let idx = playlists.firstIndex(where: { $0.id == playlist.id }) else { return }
+        let ext = url.pathExtension.isEmpty ? "jpg" : url.pathExtension
+        let dest = playlistCoversDirectory.appendingPathComponent("\(playlist.id.uuidString).\(ext)")
+        try FileManager.default.createDirectory(at: playlistCoversDirectory, withIntermediateDirectories: true)
+        if FileManager.default.fileExists(atPath: dest.path) {
+            try FileManager.default.removeItem(at: dest)
+        }
+        try FileManager.default.copyItem(at: url, to: dest)
+        playlists[idx].customCoverPath = dest.path
+        savePlaylists()
+    }
+
+    func clearCustomCover(_ playlist: Playlist) {
+        guard let idx = playlists.firstIndex(where: { $0.id == playlist.id }) else { return }
+        if let path = playlists[idx].customCoverPath {
+            try? FileManager.default.removeItem(atPath: path)
+        }
+        playlists[idx].customCoverPath = nil
+        savePlaylists()
+    }
+
+    func resetCover(_ playlist: Playlist) {
+        guard let idx = playlists.firstIndex(where: { $0.id == playlist.id }) else { return }
+        clearCustomCover(playlist)
+        playlists[idx].coverClipID = nil
+        savePlaylists()
+    }
+
     func coverThumbnailPath(for playlist: Playlist) -> String? {
+        if let path = playlist.customCoverPath,
+           FileManager.default.fileExists(atPath: path) {
+            return path
+        }
         if let coverID = playlist.coverClipID,
            let clip = clips.first(where: { $0.id == coverID }) {
             return clip.thumbnailPath
