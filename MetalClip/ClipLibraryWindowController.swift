@@ -1212,11 +1212,17 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         queueListTableView.reloadData()
         queueListHeightConstraint.constant = 200
         queueListContainer.isHidden = false
+        queueListTableView.scrollRowToVisible(playbackIndex)
     }
 
     private func hideQueueList() {
         queueListHeightConstraint.constant = 0
         queueListContainer.isHidden = true
+    }
+
+    private func updateQueueListHighlight() {
+        queueListTableView.reloadData()
+        queueListTableView.scrollRowToVisible(playbackIndex)
     }
 
     private func observePlaybackEnd() {
@@ -1251,6 +1257,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         player?.replaceCurrentItem(with: newItem)
         player?.play()
         updatePlayerInfo()
+        updateQueueListHighlight()
 
         observePlaybackEnd()
     }
@@ -2157,13 +2164,28 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     private func queueListCell(for row: Int) -> NSView {
         guard row < playbackQueue.count else { return NSView() }
         let clip = playbackQueue[row]
+        let isCurrent = row == playbackIndex
         let cell = NSView()
+        cell.wantsLayer = true
+        cell.layer?.backgroundColor = isCurrent
+            ? NSColor.controlAccentColor.withAlphaComponent(0.15).cgColor
+            : nil
 
-        let numberLabel = NSTextField(labelWithString: "\(row + 1).")
-        numberLabel.translatesAutoresizingMaskIntoConstraints = false
-        numberLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        numberLabel.textColor = .secondaryLabelColor
-        numberLabel.alignment = .right
+        let numberLabel: NSView
+        if isCurrent {
+            let icon = NSImageView(image: NSImage(systemSymbolName: "play.fill", accessibilityDescription: "Now Playing")!)
+            icon.translatesAutoresizingMaskIntoConstraints = false
+            icon.contentTintColor = .controlAccentColor
+            icon.setContentHuggingPriority(.required, for: .horizontal)
+            numberLabel = icon
+        } else {
+            let label = NSTextField(labelWithString: "\(row + 1).")
+            label.translatesAutoresizingMaskIntoConstraints = false
+            label.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+            label.textColor = .secondaryLabelColor
+            label.alignment = .right
+            numberLabel = label
+        }
         cell.addSubview(numberLabel)
 
         let thumbView = NSView()
