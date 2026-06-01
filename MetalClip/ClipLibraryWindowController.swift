@@ -366,6 +366,10 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     private var playerNormalConstraints: [NSLayoutConstraint] = []
     private var fullscreenOverlayConstraints: [NSLayoutConstraint] = []
 
+    private var queueListContainer: NSView!
+    private var queueListTableView: NSTableView!
+    private var queueListHeightConstraint: NSLayoutConstraint!
+
     private var searchView: NSView!
     private var searchField: NSSearchField!
     private var dateChipRow: NSStackView!
@@ -1191,6 +1195,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         let clip = playbackQueue[playbackIndex]
         openClipInPlayer(clip)
         observePlaybackEnd()
+        showQueueList()
     }
 
     private func stopContinuousPlay() {
@@ -1200,6 +1205,18 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         }
         playbackQueue = []
         playbackIndex = 0
+        hideQueueList()
+    }
+
+    private func showQueueList() {
+        queueListTableView.reloadData()
+        queueListHeightConstraint.constant = 200
+        queueListContainer.isHidden = false
+    }
+
+    private func hideQueueList() {
+        queueListHeightConstraint.constant = 0
+        queueListContainer.isHidden = true
     }
 
     private func observePlaybackEnd() {
@@ -1332,6 +1349,46 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         // FUTURE: [Enhance] (Stage 6)  [Export]  [Trim]
         playerInfoBar.addSubview(buttonStack)
 
+        // Queue list container (below info bar, visible only during continuous playback)
+        queueListContainer = NSView()
+        queueListContainer.translatesAutoresizingMaskIntoConstraints = false
+        queueListContainer.wantsLayer = true
+        queueListContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        playerContainerView.addSubview(queueListContainer)
+
+        let queueHeader = NSTextField(labelWithString: "Up Next")
+        queueHeader.translatesAutoresizingMaskIntoConstraints = false
+        queueHeader.font = .systemFont(ofSize: 12, weight: .semibold)
+        queueHeader.textColor = .secondaryLabelColor
+        queueListContainer.addSubview(queueHeader)
+
+        let queueColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("QueueCol"))
+        queueColumn.title = ""
+
+        queueListTableView = NSTableView()
+        queueListTableView.addTableColumn(queueColumn)
+        queueListTableView.headerView = nil
+        queueListTableView.rowHeight = 40
+        queueListTableView.backgroundColor = .clear
+        queueListTableView.selectionHighlightStyle = .none
+        queueListTableView.delegate = self
+        queueListTableView.dataSource = self
+
+        let queueScroll = NSScrollView()
+        queueScroll.translatesAutoresizingMaskIntoConstraints = false
+        queueScroll.documentView = queueListTableView
+        queueScroll.hasVerticalScroller = true
+        queueScroll.drawsBackground = false
+        queueListContainer.addSubview(queueScroll)
+
+        let queueSep = NSView()
+        queueSep.translatesAutoresizingMaskIntoConstraints = false
+        queueSep.wantsLayer = true
+        queueSep.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        queueListContainer.addSubview(queueSep)
+
+        queueListHeightConstraint = queueListContainer.heightAnchor.constraint(equalToConstant: 0)
+
         NSLayoutConstraint.activate([
             playerBackButton.leadingAnchor.constraint(equalTo: playerContainerView.leadingAnchor, constant: 12),
             playerBackButton.topAnchor.constraint(equalTo: playerContainerView.topAnchor, constant: 8),
@@ -1344,8 +1401,26 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
 
             playerInfoBar.leadingAnchor.constraint(equalTo: playerContainerView.leadingAnchor),
             playerInfoBar.trailingAnchor.constraint(equalTo: playerContainerView.trailingAnchor),
-            playerInfoBar.bottomAnchor.constraint(equalTo: playerContainerView.bottomAnchor),
+            playerInfoBar.bottomAnchor.constraint(equalTo: queueListContainer.topAnchor),
             playerInfoBar.heightAnchor.constraint(equalToConstant: 90),
+
+            queueListContainer.leadingAnchor.constraint(equalTo: playerContainerView.leadingAnchor),
+            queueListContainer.trailingAnchor.constraint(equalTo: playerContainerView.trailingAnchor),
+            queueListContainer.bottomAnchor.constraint(equalTo: playerContainerView.bottomAnchor),
+            queueListHeightConstraint,
+
+            queueSep.leadingAnchor.constraint(equalTo: queueListContainer.leadingAnchor),
+            queueSep.trailingAnchor.constraint(equalTo: queueListContainer.trailingAnchor),
+            queueSep.topAnchor.constraint(equalTo: queueListContainer.topAnchor),
+            queueSep.heightAnchor.constraint(equalToConstant: 1),
+
+            queueHeader.leadingAnchor.constraint(equalTo: queueListContainer.leadingAnchor, constant: 12),
+            queueHeader.topAnchor.constraint(equalTo: queueSep.bottomAnchor, constant: 6),
+
+            queueScroll.leadingAnchor.constraint(equalTo: queueListContainer.leadingAnchor),
+            queueScroll.trailingAnchor.constraint(equalTo: queueListContainer.trailingAnchor),
+            queueScroll.topAnchor.constraint(equalTo: queueHeader.bottomAnchor, constant: 4),
+            queueScroll.bottomAnchor.constraint(equalTo: queueListContainer.bottomAnchor),
 
             playerFilenameLabel.leadingAnchor.constraint(equalTo: playerInfoBar.leadingAnchor, constant: 12),
             playerFilenameLabel.trailingAnchor.constraint(equalTo: playerInfoBar.trailingAnchor, constant: -12),
@@ -1983,6 +2058,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     // MARK: - NSTableViewDataSource
 
     func numberOfRows(in tableView: NSTableView) -> Int {
+        if tableView == queueListTableView { return playbackQueue.count }
         if tableView == playlistDetailTableView { return playlistDetailClips.count }
         return NavItem.allCases.count
     }
@@ -1990,6 +2066,9 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     // MARK: - NSTableViewDelegate
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        if tableView == queueListTableView {
+            return queueListCell(for: row)
+        }
         if tableView == playlistDetailTableView {
             return playlistDetailCell(for: row)
         }
@@ -1997,18 +2076,20 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     }
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        if tableView == queueListTableView { return 40 }
         if tableView == playlistDetailTableView { return 76 }
         return 28
     }
 
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
-        true
+        if tableView == queueListTableView { return false }
+        return true
     }
 
     // MARK: - Playlist Detail Drag & Drop
 
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
-        guard tableView == playlistDetailTableView, playlistDetailSort == .manual else { return nil }
+        guard tableView == playlistDetailTableView && tableView != queueListTableView, playlistDetailSort == .manual else { return nil }
         let item = NSPasteboardItem()
         item.setString(String(row), forType: .string)
         return item
@@ -2072,6 +2153,69 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     }
 
     // MARK: - Playlist Detail Cells
+
+    private func queueListCell(for row: Int) -> NSView {
+        guard row < playbackQueue.count else { return NSView() }
+        let clip = playbackQueue[row]
+        let cell = NSView()
+
+        let numberLabel = NSTextField(labelWithString: "\(row + 1).")
+        numberLabel.translatesAutoresizingMaskIntoConstraints = false
+        numberLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        numberLabel.textColor = .secondaryLabelColor
+        numberLabel.alignment = .right
+        cell.addSubview(numberLabel)
+
+        let thumbView = NSView()
+        thumbView.translatesAutoresizingMaskIntoConstraints = false
+        thumbView.wantsLayer = true
+        thumbView.layer?.cornerRadius = 3
+        thumbView.layer?.masksToBounds = true
+        thumbView.layer?.backgroundColor = NSColor.quaternaryLabelColor.cgColor
+        thumbView.layer?.contentsGravity = .resizeAspectFill
+        if let path = clip.thumbnailPath, let image = NSImage(contentsOfFile: path) {
+            thumbView.layer?.contents = image
+        }
+        cell.addSubview(thumbView)
+
+        let durationBadge = NSTextField(labelWithString: formatDuration(clip.duration))
+        durationBadge.translatesAutoresizingMaskIntoConstraints = false
+        durationBadge.font = .monospacedDigitSystemFont(ofSize: 8, weight: .medium)
+        durationBadge.textColor = .white
+        durationBadge.wantsLayer = true
+        durationBadge.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.7).cgColor
+        durationBadge.layer?.cornerRadius = 2
+        durationBadge.alignment = .center
+        thumbView.addSubview(durationBadge)
+
+        let baseName = (clip.filename as NSString).deletingPathExtension
+        let nameLabel = NSTextField(labelWithString: baseName)
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.font = .systemFont(ofSize: 11)
+        nameLabel.lineBreakMode = .byTruncatingTail
+        nameLabel.maximumNumberOfLines = 1
+        cell.addSubview(nameLabel)
+
+        NSLayoutConstraint.activate([
+            numberLabel.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+            numberLabel.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            numberLabel.widthAnchor.constraint(equalToConstant: 24),
+
+            thumbView.leadingAnchor.constraint(equalTo: numberLabel.trailingAnchor, constant: 6),
+            thumbView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            thumbView.widthAnchor.constraint(equalToConstant: 60),
+            thumbView.heightAnchor.constraint(equalToConstant: 34),
+
+            durationBadge.trailingAnchor.constraint(equalTo: thumbView.trailingAnchor, constant: -2),
+            durationBadge.bottomAnchor.constraint(equalTo: thumbView.bottomAnchor, constant: -2),
+
+            nameLabel.leadingAnchor.constraint(equalTo: thumbView.trailingAnchor, constant: 8),
+            nameLabel.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
+            nameLabel.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        ])
+
+        return cell
+    }
 
     private func playlistDetailCell(for row: Int) -> NSView {
         guard row < playlistDetailClips.count else { return NSView() }
@@ -2168,6 +2312,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     }
 
     private func selectNav(_ item: NavItem) {
+        stopContinuousPlay()
         currentNav = item
         navTableView?.selectRowIndexes(IndexSet(integer: item.rawValue), byExtendingSelection: false)
         showMainView(for: item)
@@ -2183,6 +2328,9 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         playerView.player = player
         player?.play()
         updatePlayerInfo()
+        if playbackQueue.isEmpty {
+            hideQueueList()
+        }
         showPlayerInMain()
     }
 
@@ -2233,6 +2381,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
 
     @objc private func backToList() {
         player?.pause()
+        stopContinuousPlay()
         activeClip = nil
         isShowingPlayer = false
         showMainView(for: currentNav)
@@ -2249,6 +2398,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         window?.backgroundColor = .black
 
         splitView.isHidden = true
+        queueListContainer.isHidden = true
 
         playerView.removeFromSuperview()
         NSLayoutConstraint.deactivate(playerNormalConstraints)
@@ -2281,6 +2431,10 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         splitView.isHidden = false
         splitView.setPosition(160, ofDividerAt: 0)
         splitView.adjustSubviews()
+
+        if !playbackQueue.isEmpty {
+            queueListContainer.isHidden = false
+        }
     }
 
     // MARK: - Keyboard
@@ -2756,6 +2910,7 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     }
 
     @objc private func backToPlaylistList() {
+        stopContinuousPlay()
         activePlaylist = nil
         isShowingPlaylistDetail = false
         playlistDetailClips = []
