@@ -1225,6 +1225,26 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         queueListTableView.scrollRowToVisible(playbackIndex)
     }
 
+    @objc private func queueListRowClicked() {
+        let row = queueListTableView.clickedRow
+        guard row >= 0, row < playbackQueue.count, row != playbackIndex else { return }
+
+        if let observer = playbackEndObserver {
+            NotificationCenter.default.removeObserver(observer)
+            playbackEndObserver = nil
+        }
+
+        playbackIndex = row
+        let clip = playbackQueue[row]
+        let url = library.directory.appendingPathComponent(clip.filename)
+        activeClip = clip
+        player?.replaceCurrentItem(with: AVPlayerItem(url: url))
+        player?.play()
+        updatePlayerInfo()
+        updateQueueListHighlight()
+        observePlaybackEnd()
+    }
+
     private func observePlaybackEnd() {
         if let observer = playbackEndObserver {
             NotificationCenter.default.removeObserver(observer)
@@ -1380,6 +1400,8 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
         queueListTableView.selectionHighlightStyle = .none
         queueListTableView.delegate = self
         queueListTableView.dataSource = self
+        queueListTableView.target = self
+        queueListTableView.action = #selector(queueListRowClicked)
 
         let queueScroll = NSScrollView()
         queueScroll.translatesAutoresizingMaskIntoConstraints = false
@@ -2089,7 +2111,6 @@ class ClipLibraryWindowController: NSObject, ClipLibraryDelegate, NSTableViewDat
     }
 
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
-        if tableView == queueListTableView { return false }
         return true
     }
 
